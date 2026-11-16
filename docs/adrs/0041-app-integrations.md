@@ -1,6 +1,6 @@
 # ADR 0041: App integrations (Manifest first): REST over OAuth, app context, video upload and webhooks
 
-- Status: **accepted; built, not deployed** (2026-11-15). Unit, route and database tests pass, and the whole flow ran against the local stack (sign-in session, context, idempotent send, a streamed MP4 upload through Supabase Storage, publish, like, comment, the app feed, deletion and a webhook drain). Not yet run against production, and the "From Manifest" chip has not been checked on the iOS Simulator or Android.
+- Status: **accepted; built, not deployed** (2026-11-15). Unit, route and database tests pass, and the whole flow ran against the local stack (sign-in session, context, idempotent send, a streamed MP4 upload through Supabase Storage, publish, like, comment, the app feed, deletion and a webhook drain). The "From Manifest" chip on a post was seen in the web app at 375 px, signed out. Not yet run against production. The conversation chip (it needs a signed-in session) and the iOS Simulator and Android have not been checked.
 - Contract: [MANIFEST_INTEGRATION_CONTRACT.md](../MANIFEST_INTEGRATION_CONTRACT.md) (v1). Builds on [ADR 0009](0009-short-video-posting.md) (post videos) and [ADR 0027](0027-one-agent-plugin-for-every-marketplace.md) ("Sign in with Open Media").
 
 ## Context
