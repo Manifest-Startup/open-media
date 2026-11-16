@@ -225,7 +225,31 @@ export async function removePasskey(id: string): Promise<void> {
 export async function passkeyStepNeeded(): Promise<boolean> {
   const { data, error } = await client().auth.mfa.getAuthenticatorAssuranceLevel();
   if (error) throw friendly(error, 'Could not check your sign-in.');
-  return data.nextLevel === 'aal2' && data.currentLevel !== 'aal2';
+  if (data.nextLevel !== 'aal2' || data.currentLevel === 'aal2') return false;
+  // The database has the last word: a passkey-first sign-in can already be enough (ADR 0042).
+  const { data: meets, error: rpcError } = await client().rpc('open_media_session_meets_mfa');
+  return rpcError !== null || meets !== true;
+}
+
+/** The authenticator app (TOTP) this account uses as its second step, if any (ADR 0042). */
+export async function authenticatorStepFactor(): Promise<string | undefined> {
+  const { data } = await client().auth.mfa.listFactors();
+  return data?.all.find((factor) => factor.factor_type === 'totp' && factor.status === 'verified')?.id;
+}
+
+/** Confirms this sign-in with the authenticator app's 6-digit code. */
+export async function completeAuthenticatorStep(factorId: string, code: string): Promise<void> {
+  const token = code.replace(/\s+/g, '');
+  if (!/^\d{6}$/.test(token)) throw new Error('Enter the 6-digit code from your authenticator app.');
+  const supabase = client();
+  const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId, code: token });
+  if (error) throw new Error('That code isn’t right. Check the time on your phone and try the newest code.');
+  if (pendingNewPassword !== undefined) {
+    const password = pendingNewPassword;
+    pendingNewPassword = undefined;
+    const { error: updateError } = await supabase.auth.updateUser({ password });
+    if (updateError) throw friendly(updateError, 'Signed in, but the new password couldn’t be saved. Set it again in Profile → Sign-in and security.');
+  }
 }
 
 /** Confirms this sign-in with one of the person's passkeys (the browser offers the right one). */
@@ -268,4 +292,139 @@ function passkeyError(error: Error, fallback: string): Error {
   if (/InvalidStateError|already registered/i.test(detail)) return new Error('This device already has a passkey for your account.');
   if (/SecurityError|rp ?id|origin/i.test(detail)) return new Error('Passkeys aren’t available at this web address.');
   return new Error(error?.message || fallback);
+}
+
+// Sign-in passkeys (ADR 0042) -------------------------------------------------------------------
+//
+// Supabase passkeys (/auth/v1/passkeys): sign in with one tap, no email or password. These are a
+// way in, not a second step: the second-step passkeys above are separate (WebAuthn MFA factors).
+
+export interface SignInPasskey { id: string; name: string; addedAt: string; lastUsedAt?: string }
+
+/** Whether this browser can add or use sign-in passkeys (web only; the phone apps come later). */
+export function signInPasskeysSupportedHere(): boolean {
+  return Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.PublicKeyCredential === 'function' && window.isSecureContext;
+}
+
+export async function listSignInPasskeys(): Promise<SignInPasskey[]> {
+  const { data, error } = await client().auth.passkey.list();
+  if (error) throw securityError(error, 'Could not load your passkeys.');
+  return (data ?? []).map((item) => ({ id: item.id, name: item.friendly_name || 'Passkey', addedAt: item.created_at, lastUsedAt: item.last_used_at }));
+}
+
+/** Creates a sign-in passkey on this device and names it after the device. */
+export async function addSignInPasskey(name: string): Promise<void> {
+  if (!signInPasskeysSupportedHere()) throw new Error('Add a passkey from Open Media on the web, in a browser that supports passkeys.');
+  const supabase = client();
+  const { data, error } = await supabase.auth.registerPasskey();
+  if (error || !data) throw securityError(error, 'Could not add the passkey.');
+  const friendlyName = name.trim().slice(0, 120);
+  if (friendlyName) await supabase.auth.passkey.update({ passkeyId: data.id, friendlyName }).catch(() => undefined);
+}
+
+export async function renameSignInPasskey(id: string, name: string): Promise<void> {
+  const friendlyName = name.trim().slice(0, 120);
+  if (!friendlyName) throw new Error('Give the passkey a name.');
+  const { error } = await client().auth.passkey.update({ passkeyId: id, friendlyName });
+  if (error) throw securityError(error, 'Could not rename the passkey.');
+}
+
+export async function removeSignInPasskey(id: string): Promise<void> {
+  const { error } = await client().auth.passkey.delete({ passkeyId: id });
+  if (error) throw securityError(error, 'Could not remove the passkey.');
+}
+
+// Authenticator app (TOTP) --------------------------------------------------------------------
+
+export interface TotpEnrollment { factorId: string; secret: string; uri: string }
+
+/** The verified authenticator app, if the person has one. */
+export async function authenticatorApp(): Promise<{ id: string; name: string; addedAt: string } | undefined> {
+  const { data, error } = await client().auth.mfa.listFactors();
+  if (error) throw securityError(error, 'Could not load your authenticator app.');
+  const factor = data.all.find((item) => item.factor_type === 'totp' && item.status === 'verified');
+  return factor ? { id: factor.id, name: factor.friendly_name || 'Authenticator app', addedAt: factor.created_at } : undefined;
+}
+
+/** Starts adding an authenticator app: its secret and otpauth:// address for the QR code. */
+export async function startAuthenticatorApp(): Promise<TotpEnrollment> {
+  const supabase = client();
+  // An earlier attempt that was never confirmed would block a new one with the same name.
+  const { data: existing } = await supabase.auth.mfa.listFactors();
+  for (const factor of existing?.all ?? []) if (factor.factor_type === 'totp' && factor.status === 'unverified') await supabase.auth.mfa.unenroll({ factorId: factor.id });
+  const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'Authenticator app', issuer: 'Open Media' });
+  if (error || !data) throw securityError(error, 'Could not start adding the authenticator app.');
+  return { factorId: data.id, secret: data.totp.secret, uri: data.totp.uri };
+}
+
+/** Confirms the app with its first code; from then on, signing in asks for a code. */
+export async function confirmAuthenticatorApp(factorId: string, code: string): Promise<void> {
+  const token = code.replace(/\s+/g, '');
+  if (!/^\d{6}$/.test(token)) throw new Error('Enter the 6-digit code your authenticator app shows.');
+  const { error } = await client().auth.mfa.challengeAndVerify({ factorId, code: token });
+  if (error) throw securityError(error, 'That code isn’t right. Try the newest one.');
+}
+
+export async function cancelAuthenticatorApp(factorId: string): Promise<void> {
+  await client().auth.mfa.unenroll({ factorId }).catch(() => undefined);
+}
+
+export async function removeAuthenticatorApp(factorId: string): Promise<void> {
+  const supabase = client();
+  const { error } = await supabase.auth.mfa.unenroll({ factorId });
+  if (error) throw securityError(error, 'Could not remove the authenticator app.');
+  await supabase.auth.refreshSession();
+}
+
+// Recovery codes ------------------------------------------------------------------------------
+
+export async function recoveryCodesLeft(): Promise<number> {
+  const { data, error } = await client().rpc('open_media_recovery_codes_left');
+  if (error) throw securityError(error, 'Could not check your recovery codes.');
+  return Number(data) || 0;
+}
+
+/** Ten new one-time codes, replacing the old ones. They are shown once; only hashes are kept. */
+export async function newRecoveryCodes(): Promise<string[]> {
+  const { data, error } = await client().rpc('open_media_new_recovery_codes');
+  if (error) throw securityError(error, 'Could not make recovery codes.');
+  return (data as string[]) ?? [];
+}
+
+// Apps signed in with Open Media --------------------------------------------------------------
+
+export interface ConnectedApp { id: string; name: string; logoUri?: string; connectedAt: string }
+
+async function accountAPI(path: string, method = 'GET') {
+  const { data } = await client().auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error('Sign in first.');
+  const response = await fetch(`${getAPIURL()}${path}`, { method, headers: { authorization: `Bearer ${token}` } });
+  const body = await response.json().catch(() => undefined) as Record<string, unknown> | undefined;
+  if (!response.ok) throw new Error(((body?.error as { message?: string } | undefined)?.message) ?? 'Open Media couldn’t answer. Try again shortly.');
+  return body ?? {};
+}
+
+export async function listConnectedApps(): Promise<{ apps: ConnectedApp[]; available: boolean }> {
+  const body = await accountAPI('/v1/me/apps') as { apps?: Array<{ id: string; name: string; logo_uri: string | null; connected_at: string }>; available?: boolean };
+  return { apps: (body.apps ?? []).map((app) => ({ id: app.id, name: app.name, logoUri: app.logo_uri ?? undefined, connectedAt: app.connected_at })), available: body.available !== false };
+}
+
+/** Disconnects an app: its access stops at once. */
+export async function disconnectApp(id: string): Promise<void> {
+  await accountAPI(`/v1/me/apps/${encodeURIComponent(id)}`, 'DELETE');
+}
+
+/** True when Supabase wants this session's second step before a change (insufficient_aal). */
+export function needsSecondStepFirst(error: unknown): boolean {
+  return error instanceof Error && error.name === 'SecondStepFirst';
+}
+
+function securityError(error: { message?: string; code?: string; name?: string } | null | undefined, fallback: string): Error {
+  const detail = `${error?.code ?? ''} ${error?.message ?? ''}`;
+  if (/insufficient_aal|AAL2 (session|required)/i.test(detail)) return Object.assign(new Error('Confirm it’s you first, with your passkey or authenticator app, then try again.'), { name: 'SecondStepFirst' });
+  if (/NotAllowedError|cancel|abort|timed out/i.test(`${error?.name ?? ''} ${detail}`)) return new Error('The passkey prompt was closed or timed out. Try again.');
+  if (/InvalidStateError|already registered|excludeCredentials/i.test(`${error?.name ?? ''} ${detail}`)) return new Error('This device already has a passkey for your account.');
+  if (/passkey.*(disabled|not enabled)|totp.*(disabled|not enabled)|mfa_totp_(enroll|verify)_not_enabled/i.test(detail)) return new Error('That isn’t switched on for Open Media yet. Try again later.');
+  return friendly(error, fallback);
 }

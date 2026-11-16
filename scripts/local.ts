@@ -90,6 +90,10 @@ async function main() {
     `SUPABASE_PUBLISHABLE_KEY=${publishableKey}`,
     `MAIL_CREDENTIALS_KEY=${mailKey}`,
     `CONVO_APP_ORIGIN=${appURL}`,
+    // "Sign in with Open Media" sends people to the web app's sign-in gateway (ADR 0042). It uses
+    // 127.0.0.1 like the API, so the gateway and the API are the same site and the challenge cookie
+    // (SameSite=Lax) comes with the gateway's final post. Production: openmedia.site and api.openmedia.site.
+    `SIGN_IN_GATEWAY_URL=${appURL.replace('localhost', '127.0.0.1')}/signin`,
     `EVENTS_PUBLIC_ORIGIN=${apiURL}`,
     'MAIL_ALLOW_LOCAL_SERVERS=true',
     // Lets profile import read the sample portfolio on localhost. Production never sets it.

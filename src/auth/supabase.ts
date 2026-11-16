@@ -5,6 +5,7 @@ import { AppState, Platform } from 'react-native';
 import { createClient, processLock, SupabaseClient, SupportedStorage } from '@supabase/supabase-js';
 
 import { createAuthRedirectURL, parseAuthCallbackURL, signInEmailsIncludeCode } from '../domain/authCallback';
+import { signInEmailError } from '../domain/signInErrors';
 
 let client: SupabaseClient | undefined;
 let nativeStorage: ChunkedSecureStorage | undefined;
@@ -22,6 +23,8 @@ export function getSupabaseClient(): SupabaseClient | undefined {
         detectSessionInUrl: false,
         flowType: 'pkce',
         lock: processLock,
+        // Supabase passkeys (sign in with no email or password, ADR 0042). Only switches the API on.
+        experimental: { passkey: true },
       },
     });
     if (Platform.OS !== 'web') {
@@ -29,6 +32,21 @@ export function getSupabaseClient(): SupabaseClient | undefined {
     }
   }
   return client;
+}
+
+/**
+ * A separate, in-memory client for the sign-in gateway's app mode (ADR 0042): signing in to connect
+ * an app gives that app's grant its own session, so refreshing one can never sign the other out,
+ * and nothing about the app's session is saved in this browser. The implicit flow lets the email's
+ * one-tap link be verified here by its token hash, with no code verifier to keep.
+ */
+export function createGatewayClient(): SupabaseClient | undefined {
+  const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  const publishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  if (!url || !publishableKey) return undefined;
+  return createClient(url, publishableKey, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, flowType: 'implicit', storageKey: 'open-media-gateway', experimental: { passkey: true } },
+  });
 }
 
 /**
@@ -53,7 +71,7 @@ export async function sendSignInLink(email: string): Promise<void> {
   const webOrigin = Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : undefined;
   const emailRedirectTo = createAuthRedirectURL(Platform.OS === 'web' ? 'web' : 'native', webOrigin);
   const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo } });
-  if (error) throw error;
+  if (error) throw signInEmailError(error);
 }
 
 export async function signOut(): Promise<void> {

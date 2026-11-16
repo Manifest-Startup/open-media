@@ -45,88 +45,131 @@ test('the account server is reached as the person, with their own session and no
   assert.equal(await forwarded.text(), '{"jsonrpc":"2.0"}');
 });
 
-test('the sign-in pages refuse forged posts and expired or missing challenges', async () => {
+const kvStore = () => {
   const kv = new Map<string, string>();
-  const env = { ...signIn, OAUTH_KV: { get: async (key: string) => kv.get(key) ?? null, put: async (key: string, value: string) => { kv.set(key, value); }, delete: async (key: string) => { kv.delete(key); } } as unknown as KVNamespace, OAUTH_PROVIDER: {} as never };
-  const post = (path: string, body: string, headers: Record<string, string> = {}) => handleAccountAuthorization(new Request(`https://api.openmedia.site${path}`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers }, body }), env);
-  assert.equal((await post('/authorize/account/email', 'challenge=x', { origin: 'https://evil.test' }))!.status, 403, 'another site cannot post the form');
+  return { kv, binding: { get: async (key: string) => kv.get(key) ?? null, put: async (key: string, value: string) => { kv.set(key, value); }, delete: async (key: string) => { kv.delete(key); } } as unknown as KVNamespace };
+};
+const gateway = 'https://openmedia.site/signin';
+const jwt = (claims: Record<string, unknown>) => `e30.${btoa(JSON.stringify(claims)).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_')}.sig`;
+
+test('the session post refuses forged posts and expired or missing challenges', async () => {
+  const { binding } = kvStore();
+  const env = { ...signIn, OAUTH_KV: binding, OAUTH_PROVIDER: {} as never, SIGN_IN_GATEWAY_URL: gateway };
+  const post = (body: string, headers: Record<string, string> = {}) => handleAccountAuthorization(new Request('https://api.openmedia.site/authorize/account/session', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers }, body }), env);
+  assert.equal((await post('challenge=x', { origin: 'https://evil.test' }))!.status, 403, 'another site cannot post the form');
   const id = 'a'.repeat(64);
-  assert.equal((await post('/authorize/account/complete', `challenge=${id}&code=123456&approve=yes`, { cookie: `om_account_oauth=${'b'.repeat(64)}` }))!.status, 400, 'the challenge must match the browser that started it');
-  assert.equal((await post('/authorize/account/complete', `challenge=${id}&code=123456&approve=yes`, { cookie: `om_account_oauth=${id}` }))!.status, 400, 'an unknown challenge has expired');
+  assert.equal((await post(`challenge=${id}&access_token=a.b.c&refresh_token=rrrrrrrrrr`, { cookie: `om_account_oauth=${'b'.repeat(64)}`, origin: 'https://openmedia.site' }))!.status, 400, 'the challenge must match the browser that started it');
+  assert.equal((await post(`challenge=${id}&access_token=a.b.c&refresh_token=rrrrrrrrrr`, { cookie: `om_account_oauth=${id}` }))!.status, 400, 'an unknown challenge has expired');
   assert.equal(await handleAccountAuthorization(new Request('https://api.openmedia.site/somewhere-else', { method: 'POST' }), env), undefined);
+  // The old Worker forms are gone: the gateway does the signing in.
+  assert.equal(await handleAccountAuthorization(new Request('https://api.openmedia.site/authorize/account/email', { method: 'POST', body: 'challenge=x' }), env), undefined);
+  assert.equal(await handleAccountAuthorization(new Request('https://api.openmedia.site/authorize/account/complete', { method: 'POST', body: 'challenge=x' }), env), undefined);
 });
 
-test('a web app identified by a Client ID Metadata Document gets the account sign-in (Manifest, ADR 0041)', async () => {
-  const kv = new Map<string, string>();
+test('a web app identified by a Client ID Metadata Document is sent to the sign-in gateway (Manifest, ADR 0041/0042)', async () => {
+  const { kv, binding } = kvStore();
   const clientId = 'https://manifeststartup.com/oauth/open-media-client.json';
   const redirectUri = 'https://manifeststartup.com/api/integrations/open-media/callback';
   const looked: string[] = [];
   // The provider resolves the document (its own CIMD support) and checks the redirect URI against it.
   const provider = {
     parseAuthRequest: async () => ({ responseType: 'code', clientId, redirectUri, scope: ['account'], state: 's', codeChallenge: 'c', codeChallengeMethod: 'S256' }),
-    lookupClient: async (id: string) => { looked.push(id); return { clientId: id, clientName: 'Manifest', redirectUris: [redirectUri], tokenEndpointAuthMethod: 'none' }; },
+    lookupClient: async (id: string) => { looked.push(id); return { clientId: id, clientName: 'Manifest', logoUri: 'https://manifeststartup.com/icon.png', redirectUris: [redirectUri], tokenEndpointAuthMethod: 'none' }; },
   };
-  const env = { ...signIn, OAUTH_KV: { get: async (key: string) => kv.get(key) ?? null, put: async (key: string, value: string) => { kv.set(key, value); }, delete: async (key: string) => { kv.delete(key); } } as unknown as KVNamespace, OAUTH_PROVIDER: provider as never };
-  const response = (await handleAccountAuthorization(new Request(`https://api.openmedia.site/authorize?client_id=${encodeURIComponent(clientId)}&scope=account`), env))!;
-  assert.equal(response.status, 200);
+  const env = { ...signIn, OAUTH_KV: binding, OAUTH_PROVIDER: provider as never, SIGN_IN_GATEWAY_URL: gateway };
+  const response = (await handleAccountAuthorization(new Request(`https://api.openmedia.site/authorize?client_id=${encodeURIComponent(clientId)}&scope=account&login_hint=${encodeURIComponent('Ana@Example.test')}`), env))!;
+  assert.equal(response.status, 302);
   assert.deepEqual(looked, [clientId]);
-  const page = await response.text();
-  assert.ok(page.includes('Connect Manifest'), 'the person sees which app is asking');
+  const id = /om_account_oauth=([0-9a-f]{64}); Path=\/authorize;.*HttpOnly; Secure; SameSite=Lax/.exec(response.headers.get('set-cookie') ?? '')![1];
+  assert.equal(response.headers.get('location'), `${gateway}?request=${id}`, 'the gateway gets the challenge, nothing else');
   const [challenge] = [...kv.values()].map((value) => JSON.parse(value) as { oauthRequest: { scope: string[]; redirectUri: string }; redirectHost: string });
   assert.deepEqual(challenge.oauthRequest.scope, ['account'], 'the grant is for the account, nothing else');
   assert.equal(challenge.redirectHost, 'manifeststartup.com');
+
+  // What the gateway shows: the app's public name and icon, and the pre-filled email.
+  const info = (await handleAccountAuthorization(new Request(`https://api.openmedia.site/authorize/account/request?challenge=${id}`), env))!;
+  assert.equal(info.headers.get('access-control-allow-origin'), 'https://openmedia.site');
+  assert.deepEqual(await info.json(), { client_name: 'Manifest', logo_uri: 'https://manifeststartup.com/icon.png', client_uri: null, redirect_host: 'manifeststartup.com', login_hint: 'ana@example.test' });
+  assert.equal((await handleAccountAuthorization(new Request(`https://api.openmedia.site/authorize/account/request?challenge=${'0'.repeat(64)}`), env))!.status, 404);
 });
 
-test('one tap: the app pre-fills the email, and the email’s button finishes the connection in the same browser', async () => {
-  const kv = new Map<string, string>();
+test('one tap and the gateway post: the email’s button and the session finish the connection in the same browser', async () => {
+  const { kv, binding } = kvStore();
   const clientId = 'https://manifeststartup.com/oauth/open-media-client.json';
   const redirectUri = 'https://manifeststartup.com/api/integrations/open-media/callback';
-  const completed: Array<{ userId: string; props: AccountGrantProps }> = [];
+  const completed: Array<{ userId: string; props: AccountGrantProps; metadata: unknown }> = [];
   const provider = {
     parseAuthRequest: async () => ({ responseType: 'code', clientId, redirectUri, scope: ['account'], state: 's', codeChallenge: 'c', codeChallengeMethod: 'S256' }),
     lookupClient: async (id: string) => ({ clientId: id, clientName: 'Manifest', redirectUris: [redirectUri], tokenEndpointAuthMethod: 'none' }),
-    completeAuthorization: async (options: { userId: string; props: AccountGrantProps }) => { completed.push(options); return { redirectTo: `${redirectUri}?code=abc&state=s` }; },
+    completeAuthorization: async (options: { userId: string; props: AccountGrantProps; metadata: unknown }) => { completed.push(options); return { redirectTo: `${redirectUri}?code=abc&state=s` }; },
   };
-  const env = { ...signIn, OAUTH_KV: { get: async (key: string) => kv.get(key) ?? null, put: async (key: string, value: string) => { kv.set(key, value); }, delete: async (key: string) => { kv.delete(key); } } as unknown as KVNamespace, OAUTH_PROVIDER: provider as never };
-  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input); const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
-    calls.push({ url, body });
-    if (url.includes('/verify')) return Response.json({ access_token: 'at', refresh_token: 'rt', expires_in: 3600, user: { id: 'u9', email: 'ana@example.test' } });
-    return Response.json({});
+  const env = { ...signIn, OAUTH_KV: binding, OAUTH_PROVIDER: provider as never, SIGN_IN_GATEWAY_URL: gateway };
+  const start = (await handleAccountAuthorization(new Request('https://api.openmedia.site/authorize?client_id=x&scope=account'), env))!;
+  const id = /om_account_oauth=([0-9a-f]{64})/.exec(start.headers.get('set-cookie') ?? '')![1];
+  const cookie = `om_account_oauth=${id}`;
+
+  // The email's button: only in the browser that started, and it hands the token hash to the gateway.
+  const link = (headers: Record<string, string>) => handleAccountAuthorization(new Request(`https://api.openmedia.site/authorize/account/link?challenge=${id}&token_hash=abcdefghijklmnopqrst&type=magiclink`, { headers }), env);
+  assert.equal((await link({}))!.status, 400, 'another browser cannot finish this connection');
+  const landed = (await link({ cookie }))!;
+  assert.equal(landed.status, 302);
+  assert.equal(landed.headers.get('location'), `${gateway}?request=${id}&token_hash=abcdefghijklmnopqrst&type=magiclink`);
+  assert.equal(completed.length, 0, 'opening the link never completes anything by itself');
+
+  const calls: string[] = [];
+  let meets = true;
+  const fetchImpl = (async (input: RequestInfo | URL) => {
+    const url = String(input); calls.push(url);
+    if (url.endsWith('/auth/v1/user')) return Response.json({ id: 'u9', email: 'ana@example.test' });
+    if (url.endsWith('/rpc/open_media_session_meets_mfa')) return meets ? Response.json(true) : new Response('{}', { status: 403 });
+    return new Response('not found', { status: 404 });
   }) as typeof fetch;
+  const post = (fields: Record<string, string>, token: string) => handleAccountAuthorization(new Request('https://api.openmedia.site/authorize/account/session', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'https://openmedia.site', cookie }, body: new URLSearchParams({ challenge: id, access_token: token, refresh_token: 'refresh-123456', ...fields }).toString() }), env, fetchImpl);
+
+  meets = false;
+  const owesStep = (await post({}, jwt({ sub: 'u9', exp: 2_000_000_000, aal: 'aal1', s: 1 })))!;
+  assert.equal(owesStep.status, 400, 'a session that still owes its second step is refused');
+  assert.ok((await owesStep.text()).includes('second step'));
+  assert.equal(completed.length, 0);
+
+  meets = true;
+  const done = (await post({}, jwt({ sub: 'u9', exp: 2_000_000_000, aal: 'aal2', s: 2 })))!;
+  assert.equal(done.status, 302);
+  assert.equal(done.headers.get('location'), `${redirectUri}?code=abc&state=s`);
+  assert.ok(done.headers.get('set-cookie')!.includes('Max-Age=0'), 'the challenge cookie is cleared');
+  assert.ok(calls.some((url) => url === 'https://db.test/auth/v1/user'), 'Supabase vouches for the session');
+  assert.equal(completed[0].userId, 'u9');
+  assert.equal(completed[0].props.refreshToken, 'refresh-123456');
+  assert.equal(completed[0].props.expiresAt, 2_000_000_000_000, 'the grant knows when the session expires');
+  assert.equal([...kv.keys()].filter((key) => key.startsWith('account-challenge:')).length, 0, 'the challenge is gone');
+  assert.equal((await post({}, jwt({ sub: 'u9', exp: 2_000_000_000, s: 3 })))!.status, 400, 'and cannot be used twice');
+});
+
+test('a changed Client ID Metadata Document is read again when a request no longer matches the cached copy', async () => {
+  const clientId = 'https://manifeststartup.com/oauth/open-media-client.json';
+  const deleted: string[] = [];
+  const cacheStorage = { open: async (name: string) => { assert.equal(name, 'workers-oauth-provider:cimd:v1'); return { delete: async (key: string) => { deleted.push(key); return true; } }; } };
+  const { forgetClientMetadata } = await import('./accountOAuth.js');
+  assert.equal(await forgetClientMetadata(clientId, cacheStorage), true);
+  assert.deepEqual(deleted, [clientId]);
+  assert.equal(await forgetClientMetadata('dynamic-client-id', cacheStorage), false, 'registered clients are not documents');
+  assert.equal(await forgetClientMetadata('http://manifeststartup.com/x.json', cacheStorage), false);
+
+  // /authorize: the first parse fails on the stale copy, the second (after eviction) succeeds.
+  let parses = 0;
+  const { binding } = kvStore();
+  const redirectUri = 'https://manifeststartup.com/api/auth/open-media/callback';
+  const provider = {
+    parseAuthRequest: async () => { parses += 1; if (parses === 1) throw new Error('Invalid redirect URI'); return { responseType: 'code', clientId, redirectUri, scope: ['account'], state: 's', codeChallenge: 'c', codeChallengeMethod: 'S256' }; },
+    lookupClient: async () => ({ clientId, clientName: 'Manifest', redirectUris: [redirectUri], tokenEndpointAuthMethod: 'none' }),
+  };
+  const realCaches = (globalThis as { caches?: unknown }).caches;
+  (globalThis as { caches?: unknown }).caches = cacheStorage;
   try {
-    const start = (await handleAccountAuthorization(new Request(`https://api.openmedia.site/authorize?client_id=x&scope=account&login_hint=${encodeURIComponent('Ana@Example.test')}`), env))!;
-    assert.ok((await start.text()).includes('value="ana@example.test"'), 'the email is pre-filled from login_hint');
-    const id = /om_account_oauth=([0-9a-f]{64})/.exec(start.headers.get('set-cookie') ?? '')![1];
-    const cookie = { cookie: `om_account_oauth=${id}` };
-    const post = (path: string, fields: Record<string, string>, headers: Record<string, string> = cookie) => handleAccountAuthorization(new Request(`https://api.openmedia.site${path}`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers }, body: new URLSearchParams({ challenge: id, ...fields }).toString() }), env);
-
-    const sent = (await post('/authorize/account/email', { email: 'ana@example.test' }))!;
-    assert.equal(sent.status, 200);
-    assert.ok((await sent.text()).includes('Tap the button in that email'));
-    const otp = new URL(calls[0].url);
-    assert.equal(otp.pathname, '/auth/v1/otp');
-    assert.equal(otp.searchParams.get('redirect_to'), `https://api.openmedia.site/authorize/account/link?challenge=${id}`, 'the email button comes back to this connection');
-
-    const link = (headers: Record<string, string>) => handleAccountAuthorization(new Request(`https://api.openmedia.site/authorize/account/link?challenge=${id}&token_hash=pkce_abcdefghijklmnop&type=magiclink`, { headers }), env);
-    const elsewhere = (await link({}))!;
-    assert.equal(elsewhere.status, 400, 'another browser cannot finish this connection');
-    const confirm = (await link(cookie))!;
-    const confirmPage = await confirm.text();
-    assert.equal(confirm.status, 200);
-    assert.ok(confirmPage.includes('Allow Manifest') && confirmPage.includes('name="token_hash" value="pkce_abcdefghijklmnop"'), 'opening the link only shows a confirm page, so link scanners cannot use it up');
-    assert.equal(completed.length, 0);
-
-    const done = (await post('/authorize/account/complete', { token_hash: 'pkce_abcdefghijklmnop', type: 'magiclink', approve: 'yes' }))!;
-    assert.equal(done.status, 302);
-    assert.equal(done.headers.get('location'), `${redirectUri}?code=abc&state=s`);
-    assert.deepEqual(calls.at(-1)!.body, { type: 'magiclink', token_hash: 'pkce_abcdefghijklmnop' });
-    assert.equal(completed[0].userId, 'u9');
-    assert.equal(completed[0].props.accessToken, 'at');
-    assert.equal([...kv.keys()].filter((key) => key.startsWith('account-challenge:')).length, 0, 'the challenge is gone');
+    const response = (await handleAccountAuthorization(new Request(`https://api.openmedia.site/authorize?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=account`), { ...signIn, OAUTH_KV: binding, OAUTH_PROVIDER: provider as never, SIGN_IN_GATEWAY_URL: gateway }))!;
+    assert.equal(response.status, 302);
+    assert.equal(parses, 2);
   } finally {
-    globalThis.fetch = realFetch;
+    (globalThis as { caches?: unknown }).caches = realCaches;
   }
 });

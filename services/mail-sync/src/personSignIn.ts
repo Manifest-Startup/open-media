@@ -63,9 +63,9 @@ function session(result: Session, origin: string) {
   };
 }
 
-export async function requestSignInCode(env: SignInEnv, origin: string, body: unknown, fetchImpl: Fetch = fetch, redirectTo?: string) {
+export async function requestSignInCode(env: SignInEnv, origin: string, body: unknown, fetchImpl: Fetch = fetch) {
   const email = readEmail(body);
-  await auth(env, fetchImpl, redirectTo ? `/otp?redirect_to=${encodeURIComponent(redirectTo)}` : '/otp', { email, create_user: true });
+  await auth(env, fetchImpl, '/otp', { email, create_user: true });
   return {
     sent: true, email,
     message: `Open Media emailed a sign-in code to ${email} from security@openmedia.site. Ask the person for the code, then POST it to ${origin}/v1/auth/verify.`,
@@ -79,14 +79,6 @@ export async function verifySignInCode(env: SignInEnv, origin: string, body: unk
   const code = String((body as { code?: unknown })?.code ?? '').replace(/\s+/g, '');
   if (!/^\d{6,10}$/.test(code)) throw new SignInError(400, 'bad_request', 'Send the code from the email as “code” (digits only).');
   return session(await auth<Session>(env, fetchImpl, '/verify', { type: 'email', email, token: code }), origin);
-}
-
-/** Signs in with the one-tap link from a sign-in email (its token hash) instead of the typed code. */
-export async function verifySignInLink(env: SignInEnv, origin: string, body: { token_hash?: unknown; type?: unknown }, fetchImpl: Fetch = fetch) {
-  const tokenHash = String(body.token_hash ?? '');
-  const type = body.type === 'signup' ? 'signup' : 'magiclink';
-  if (!/^[A-Za-z0-9_-]{16,200}$/.test(tokenHash)) throw new SignInError(400, 'bad_request', 'That sign-in link is not valid. Use the code from the email instead.');
-  return session(await auth<Session>(env, fetchImpl, '/verify', { type, token_hash: tokenHash }), origin);
 }
 
 export async function refreshSignIn(env: SignInEnv, origin: string, body: unknown, fetchImpl: Fetch = fetch) {

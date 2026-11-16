@@ -69,8 +69,9 @@ function requireClient(): SupabaseClient {
 
 export async function getCurrentProfile(
   session: Session,
+  client: SupabaseClient = requireClient(),
 ): Promise<OpenMediaProfile | undefined> {
-  const { data, error } = await requireClient()
+  const { data, error } = await client
     .from("profiles")
     .select("id, handle, display_name, bio, avatar_url, professional")
     .eq("id", session.user.id)
@@ -82,6 +83,7 @@ export async function getCurrentProfile(
 export async function saveCurrentProfile(
   session: Session,
   input: { displayName: string; handle: string },
+  client: SupabaseClient = requireClient(),
 ): Promise<OpenMediaProfile> {
   const displayName = input.displayName.trim();
   const handle = input.handle.trim().toLowerCase().replace(/^@/, "");
@@ -90,7 +92,7 @@ export async function saveCurrentProfile(
     throw new Error(
       "Use 3–24 lowercase letters, numbers, or underscores for your handle.",
     );
-  const { data, error } = await requireClient()
+  const { data, error } = await client
     .from("profiles")
     .upsert(
       { id: session.user.id, display_name: displayName, handle },

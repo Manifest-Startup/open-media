@@ -160,7 +160,7 @@ site_url = "http://127.0.0.1:3000"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://127.0.0.1:3000", "http://localhost:8081/auth", "openmedia://auth", "convo://auth"]
+additional_redirect_urls = ["https://127.0.0.1:3000", "http://localhost:8081/auth", "http://localhost:8081/signin**", "http://127.0.0.1:8081/signin**", "http://localhost:8787/authorize/account/link**", "http://127.0.0.1:8787/authorize/account/link**", "openmedia://auth", "convo://auth"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to auth.external_url.
@@ -184,15 +184,9 @@ minimum_password_length = 8
 # are: `letters_digits`, `lower_upper_letters_digits`, `lower_upper_letters_digits_symbols`
 password_requirements = ""
 
-# Configure passkey sign-ins.
-# [auth.passkey]
-# enabled = false
-
-# Configure WebAuthn relying party settings (required when passkey is enabled).
-# [auth.webauthn]
-# rp_display_name = "Supabase"
-# rp_id = "localhost"
-# rp_origins = ["http://127.0.0.1:3000"]
+# Passkey-first sign-in, with no email or password (ADR 0042). Its relying party is [auth.webauthn] below.
+[auth.passkey]
+enabled = true
 
 [auth.rate_limit]
 # Number of emails that can be sent per hour. Requires auth.email.smtp to be enabled.
@@ -317,10 +311,10 @@ auth_token = "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"
 # Control how many MFA factors can be enrolled at once per user.
 max_enrolled_factors = 10
 
-# Control MFA via App Authenticator (TOTP)
+# An authenticator app (TOTP) as a second step (ADR 0042). Optional per person; once added, required.
 [auth.mfa.totp]
-enroll_enabled = false
-verify_enabled = false
+enroll_enabled = true
+verify_enabled = true
 
 # Configure MFA via Phone Messaging
 [auth.mfa.phone]

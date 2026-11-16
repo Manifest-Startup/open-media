@@ -11,7 +11,8 @@ Base: `https://api.openmedia.site` (local: the URL `npm run local` prints for th
 - **REST with OAuth (new):** every `/v1/me/*` route is also reachable as `/v1/connected/me/*` with `Authorization: Bearer <OAuth access token>`. Same request/response bodies. `/v1/me/*` with Supabase session tokens keeps working unchanged.
 
 ## 2. Messaging (under `/v1/connected`)
-- `GET  /v1/connected/me` → `{id, handle, display_name, avatar_url}` (at least these fields).
+- `GET  /v1/connected/me` → `{id, handle, display_name, avatar_url, email, email_verified, has_profile}` (at least these fields). A brand-new account answers `has_profile: false` with `handle`, `display_name` and `avatar_url` null, instead of a 404 (ADR 0042). The sign-in gateway always asks new people for a name and handle before returning to the app, so this is rare.
+- People manage their sign-in and the apps they connected at `https://openmedia.site/settings/security` (a stable address; signed out, it signs them in first).
 - `GET  /v1/connected/me/conversations?app=manifest` → `{conversations:[{id, kind, title, context|null, members:[{id,handle,display_name,avatar_url}], last_message:{id,body,sender_id,created_at}|null, unread_count, updated_at}]}`. `app` filter optional (omit = all).
 - `POST /v1/connected/me/conversations` `{handle, context?}` → 201 `{conversation:{…same shape…}}`. Re-uses the existing direct conversation with that person; sets `context` only if the conversation has none. `context` = `{app:"manifest", idea_id:string, title?:string, url?:string}` (≤ 2 KB, validated).
 - `GET  /v1/connected/me/conversations/{id}/messages?limit=&before=` → `{messages:[{id, conversation_id, sender_id, body, created_at, reply_to_message_id|null}]}` newest-last.

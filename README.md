@@ -169,7 +169,7 @@ Open Media is in **public beta**. Everything below is in the code today.
 | Area | Available now | Status |
 | --- | --- | --- |
 | **Feed** | One feed mixing Open Media with Bluesky, Mastodon, Nostr, Farcaster, Lens, Hive and DeSo. Raw and Relevant modes. "Why this?" on every ranked post. Readable without an account. | ✅ Live |
-| **Sign-in and security** | Sign in with email and password, or with a 6-digit code emailed to you; both work on any browser or device. New accounts confirm their email with a code, and forgotten passwords are reset with one. Add a passkey (Touch ID, Face ID, Windows Hello, your phone or a security key) as a second step: from then on a password alone can't get in, and the database itself refuses sessions that skipped it. See [ADR 0034](docs/adrs/0034-passwords-and-passkeys.md). | 🧪 Beta: built and tested locally on the web; not in production yet. Phones: passwords work, passkeys come next |
+| **Sign-in and security** | One sign-in page, `openmedia.site/signin`, for the web app and every app that signs in with Open Media: **Continue with passkey** (one tap, no email or password), an emailed link and 6-digit code, or a password. New accounts choose a name and handle there. An optional second step: a passkey or an authenticator app, with ten one-time recovery codes; once added, the database itself refuses sessions that skipped it. Sign-in and security lists your passkeys (add, rename, remove), the authenticator app, recovery codes, your password, and the apps you signed in to, which you can disconnect. See [ADR 0034](docs/adrs/0034-passwords-and-passkeys.md) and [ADR 0042](docs/adrs/0042-one-sign-in-gateway-passkeys-and-mfa.md). | 🧪 Beta: built and tested locally on the web; not in production yet. Phones: passwords, email codes and the authenticator code work; passkey sign-in comes to the phone apps later |
 | **Web feeds (RSS, Atom, JSON Feed)** | Follow blogs, news sites, podcasts and weather alerts in your Feed by typing or pasting a site in Search ("theverge.com", "bbc", "weather california"), through an agent, or by importing OPML. Cards show the headline, a short excerpt, one image and a link to the publisher, never the full article. Official feeds of 41 major news outlets, the US National Weather Service and the UK Met Office carry a blue tick labelled "Official feed". Read politely: conditional requests, at most every 30 minutes, robots.txt for discovery. See [ADR 0024](docs/adrs/0024-web-feeds-rss-atom-json-feed.md). | 🧪 Tested on the web locally; not deployed; phone apps not tested |
 | **Feed lenses** | Every feed algorithm, Raw and Relevant included, is an open JSON manifest run by [one runner](src/domain/feedLenses.ts). Write one in plain words in Search or with an AI agent, keep it across devices, share it publicly or install someone else's. Lenses read only the signals they declare. See [ADR 0017](docs/adrs/0017-feed-lenses.md). | ✅ Live |
 | **Your own algorithm** | Tune the lens you use in plain words in Search: "less hive", "a lot more videos", "more new voices", "show hive again". Relevant becomes your own "My Relevant"; the built-ins never change. "Why this?" shows each post's score under your weights, every change is a version you can undo ("undo" in Search), and agents can tune, read the history and go back through MCP and REST. See [ADR 0021](docs/adrs/0021-your-own-feed-algorithm.md). | 🧪 Built and tested on the web locally; not deployed, phones not yet tested |
@@ -239,7 +239,7 @@ codex plugin marketplace add mihirkavi/open-media && codex plugin add open-media
 Install links for VS Code and Cursor, and the steps for every other client, are in [agent-plugin/README.md](agent-plugin/README.md).
 
 **Signing in:**
-- Agents connect to your account at `https://api.openmedia.site/account/mcp` with **Sign in with Open Media** (OAuth 2.1). A browser page asks for your email and the code Open Media emails you, and you approve once.
+- Agents connect to your account at `https://api.openmedia.site/account/mcp` with **Sign in with Open Media** (OAuth 2.1). The sign-in page, `openmedia.site/signin`, shows which app is asking; you sign in with a passkey, an emailed code or link, or a password, and continue once ([ADR 0042](docs/adrs/0042-one-sign-in-gateway-passkeys-and-mfa.md); built and tested locally, not yet deployed).
 - The agent never sees your session, refreshing its token renews it, and signing out disconnects it.
 - Scripts can still use a token on `/me/mcp`:
   - `open-media login you@example.com`, then `export OPEN_MEDIA_TOKEN=$(open-media token)`;
@@ -378,7 +378,7 @@ Not today. Those companies do not offer open access for apps like Open Media, an
 <details>
 <summary><strong>Do I need a crypto wallet?</strong></summary>
 <br>
-No. You sign in with your email and a password, or with a code emailed to you, and can add a passkey for extra protection. Some open networks use blockchain technology behind the scenes, but you never need to understand it, hold tokens or pay fees to read the feed.
+No. You sign in with a passkey, a code emailed to you, or your email and a password, and can add a second step (a passkey or an authenticator app) for extra protection. Some open networks use blockchain technology behind the scenes, but you never need to understand it, hold tokens or pay fees to read the feed.
 </details>
 
 <details>

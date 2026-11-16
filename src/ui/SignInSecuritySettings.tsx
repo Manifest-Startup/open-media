@@ -6,14 +6,16 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { getSupabaseClient } from '../auth/supabase';
 import { PasskeysSwitchedOff, addPasskey, hasPassword, listPasskeys, Passkey, passkeysSupportedHere, removePasskey, setPassword } from '../auth/accountSecurity';
 import { passwordProblem } from '../domain/passwordRules';
+import { SecondStepSettings, SignInPasskeySettings, ConnectedAppsSettings } from './SignInSecurityMore';
 import { ThemeColors } from '../theme';
 import { useOpenMediaTheme } from '../themeContext';
 import { Loader } from './Loader';
 import { Text, TextInput } from './Text';
 
 /**
- * Sign-in and security on your own profile (ADR 0034): a password, so you can sign in anywhere
- * without an email code, and passkeys as an optional second step after it.
+ * Sign-in and security on your own profile (ADR 0034, ADR 0042): a password, passkeys to sign in
+ * with one tap, a second step (a passkey, an authenticator app, recovery codes), and the apps
+ * signed in with Open Media.
  */
 export function SignInSecuritySettings() {
   const { colors } = useOpenMediaTheme();
@@ -53,7 +55,8 @@ export function SignInSecuritySettings() {
 
   return <>
     <Text style={styles.title}>Sign-in and security</Text>
-    <View style={styles.card}>
+    <SignInPasskeySettings />
+    <View style={[styles.card, styles.spaced]}>
       <View style={styles.row}>
         <Ionicons name="key-outline" size={20} color={colors.text} />
         <View style={styles.grow}>
@@ -74,7 +77,7 @@ export function SignInSecuritySettings() {
       <View style={[styles.row, styles.divider]}>
         <Ionicons name="finger-print-outline" size={20} color={colors.text} />
         <View style={styles.grow}>
-          <Text style={styles.rowTitle}>Passkeys</Text>
+          <Text style={styles.rowTitle}>Passkey as a second step</Text>
           <Text style={styles.hint}>{passkeys?.length
             ? 'Signing in asks for a passkey after your password or email code, so a stolen password alone can’t get in.'
             : 'Add a second step: after your password or email code, confirm with Touch ID, Face ID, Windows Hello, your phone or a security key.'}</Text>
@@ -100,6 +103,8 @@ export function SignInSecuritySettings() {
     {confirmRemove && passkeys?.length === 1 ? <Text style={styles.hint}>This is your only passkey. Removing it turns the passkey step off.</Text> : null}
     {message ? <Text accessibilityLiveRegion="polite" style={styles.success}>{message}</Text> : null}
     {error ? <Text accessibilityLiveRegion="assertive" style={styles.error}>{error}</Text> : null}
+    <SecondStepSettings email={email} />
+    <ConnectedAppsSettings />
   </>;
 }
 
@@ -115,6 +120,7 @@ function deviceName(): string {
 function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
     title: { marginTop: 28, marginBottom: 10, color: colors.text, fontSize: 16, fontWeight: '700' },
+    spaced: { marginTop: 12 },
     card: { borderWidth: 1, borderColor: colors.border, borderRadius: 16, overflow: 'hidden', backgroundColor: colors.surface },
     loading: { padding: 16 },
     block: { paddingHorizontal: 16, paddingBottom: 16, gap: 8 },

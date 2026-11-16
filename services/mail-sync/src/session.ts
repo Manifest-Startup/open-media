@@ -14,6 +14,16 @@ export class PasskeyStepRequired extends Error {
  * so routes that act with the Worker's own key can't be reached with a password alone.
  */
 export async function authenticate(request: Request, supabaseURL: string, publishableKey: string, fetchImpl: typeof fetch = fetch): Promise<{ token: string; userId: string }> {
+  const { token, userId, aal } = await verifySessionToken(request, supabaseURL);
+  if (aal !== 'aal2' && !(await meetsPasskeyStep(supabaseURL.replace(/\/$/, ''), publishableKey, token, fetchImpl))) throw new PasskeyStepRequired();
+  return { token, userId };
+}
+
+/**
+ * Only checks that the bearer token is a real, unexpired Open Media session (its signature), not its
+ * second step. For the one route that must work before that step: using a recovery code.
+ */
+export async function verifySessionToken(request: Request, supabaseURL: string): Promise<{ token: string; userId: string; aal: string }> {
   const authorization = request.headers.get('authorization');
   if (!authorization?.startsWith('Bearer ')) throw new Error('A valid Open Media session is required.');
   const token = authorization.slice(7);
@@ -22,8 +32,7 @@ export async function authenticate(request: Request, supabaseURL: string, publis
   if (!jwks) { jwks = createRemoteJWKSet(new URL(`${base}/auth/v1/.well-known/jwks.json`)); keySets.set(base, jwks); }
   const { payload } = await jwtVerify(token, jwks, { issuer: `${base}/auth/v1` });
   if (!payload.sub) throw new Error('A valid Open Media session is required.');
-  if (payload.aal !== 'aal2' && !(await meetsPasskeyStep(base, publishableKey, token, fetchImpl))) throw new PasskeyStepRequired();
-  return { token, userId: payload.sub };
+  return { token, userId: payload.sub, aal: String(payload.aal ?? 'aal1') };
 }
 
 // Short cache so a burst of requests checks once. A token's answer can only change from "no passkey"
