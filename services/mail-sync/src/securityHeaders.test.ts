@@ -33,3 +33,14 @@ test('the web app runs only its own scripts and connects only over TLS', async (
   assert.match(webAppPolicy, /connect-src 'self' https: wss:;/);
   assert.doesNotMatch(webAppPolicy, /'unsafe-eval'[^-]/);
 });
+
+test('the sign-in gateway runs no third-party scripts and connects only to Open Media and its Supabase project', async () => {
+  const { signInPolicy } = await import('./securityHeaders.js');
+  const response = await withSecurityHeaders(new Response('<html></html>', { headers: { 'content-type': 'text/html' } }), { webApp: true, signIn: { connect: ['https://db.example.supabase.co', 'https://api.openmedia.site'] } });
+  const policy = response.headers.get('content-security-policy')!;
+  assert.equal(policy, signInPolicy(['https://db.example.supabase.co', 'https://api.openmedia.site']));
+  assert.ok(policy.includes("script-src 'self' 'wasm-unsafe-eval';"), 'no analytics or other scripts');
+  assert.ok(policy.includes("connect-src 'self' https://db.example.supabase.co https://api.openmedia.site;"));
+  assert.ok(policy.includes("frame-src 'none'") && policy.includes("frame-ancestors 'none'") && policy.includes("base-uri 'none'"));
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+});

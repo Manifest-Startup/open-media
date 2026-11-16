@@ -141,3 +141,13 @@ test('the homepage HTML carries readable text, JSON-LD and Link headers for agen
   assert.equal(await (await handleWebAppRequest(new Request('https://openmedia.site/auth?code=1', { headers: html }), site))!.text(), shell);
   assert.equal((await handleWebAppRequest(new Request('https://openmedia.site/@someone', { headers: html }), site))!.headers.get('link'), null);
 });
+
+test('the sign-in gateway and the security settings address are the app, never profile shortcuts; /authorize is never one either (ADR 0042)', async () => {
+  for (const path of ['/signin?request=abc', '/settings/security']) {
+    const response = await ask(`https://openmedia.site${path}`);
+    assert.equal(response!.status, 200, path);
+    assert.equal(await response!.text(), 'app', path);
+  }
+  assert.equal(await ask('https://openmedia.site/authorize?client_id=x'), undefined, 'the OAuth endpoint is left to the Worker');
+  assert.equal(await ask('https://openmedia.site/oauth'), undefined);
+});

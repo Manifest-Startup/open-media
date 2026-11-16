@@ -40,6 +40,31 @@ export const webAppPolicy = [
   'upgrade-insecure-requests',
 ].join('; ');
 
+/**
+ * The sign-in gateway (openmedia.site/signin, ADR 0042) is stricter than the rest of the web app: no
+ * third-party scripts (not even analytics), no frames, and connections only to Open Media's API and
+ * its Supabase project. Its one form posts the session to the API, which then returns the person
+ * to the app's own https callback, so form-action allows https (as the OAuth consent page does).
+ */
+export function signInPolicy(connect: string[]): string {
+  return [
+    "default-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' https: data: blob:",
+    "font-src 'self' data:",
+    `connect-src 'self' ${[...new Set(connect)].join(' ')}`.trim(),
+    "frame-src 'none'",
+    "worker-src 'self' blob:",
+    "manifest-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self' https: http://localhost:* http://127.0.0.1:*",
+    "frame-ancestors 'none'",
+    'upgrade-insecure-requests',
+  ].join('; ');
+}
+
 async function sha256(text: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return `'sha256-${btoa(String.fromCharCode(...new Uint8Array(digest)))}'`;
@@ -67,7 +92,7 @@ export async function pagePolicy(html: string): Promise<string> {
   ].join('; ');
 }
 
-export async function withSecurityHeaders(response: Response, options: { webApp?: boolean } = {}): Promise<Response> {
+export async function withSecurityHeaders(response: Response, options: { webApp?: boolean; signIn?: { connect: string[] } } = {}): Promise<Response> {
   // WebSocket upgrades and opaque responses cannot be rebuilt.
   if (response.status === 101 || (response as Response & { webSocket?: unknown }).webSocket) return response;
   const html = /^text\/html/i.test(response.headers.get('content-type') ?? '');
@@ -75,7 +100,8 @@ export async function withSecurityHeaders(response: Response, options: { webApp?
   for (const [name, value] of Object.entries(common)) if (!headers.has(name)) headers.set(name, value);
   if (!html) return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
   if (options.webApp) {
-    headers.set('content-security-policy', webAppPolicy);
+    headers.set('content-security-policy', options.signIn ? signInPolicy(options.signIn.connect) : webAppPolicy);
+    if (options.signIn) headers.set('cache-control', 'no-store');
     return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
   }
   const body = await response.text();

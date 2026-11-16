@@ -92,7 +92,11 @@ const oauth = new OAuthProvider<WorkerEnv>({
 async function handleRequest(request: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   const webApp = await handleWebAppRequest(request, env);
-  if (webApp) return withSecurityHeaders(webApp, { webApp: true });
+  if (webApp) {
+    // The sign-in gateway (ADR 0042) gets its own stricter policy.
+    const signIn = url.pathname === '/signin' ? { connect: [new URL(env.SUPABASE_URL).origin, `https://api.${url.hostname.replace(/^www\./, '')}`] } : undefined;
+    return withSecurityHeaders(webApp, { webApp: true, signIn });
+  }
   // Supabase Auth hands every sign-in email to this signed hook (authEmail.ts).
   if (request.method === 'POST' && url.pathname === '/auth/hooks/send-email') return handleSendEmailHook(request, env);
   // ONDC buyer apps and the registry call these directly; they never go through OAuth.

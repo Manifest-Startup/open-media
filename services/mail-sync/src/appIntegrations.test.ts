@@ -114,3 +114,28 @@ test('a body longer or shorter than its Content-Length is refused', async () => 
   await assert.rejects(storeUploadedVideo(input(upload(mp4, { 'content-length': String(mp4.length - 10) })), fetchImpl), (error: IntegrationError) => error.status === 400);
   await assert.rejects(storeUploadedVideo(input(upload(mp4, { 'content-length': String(mp4.length + 10) })), fetchImpl), (error: IntegrationError) => error.status === 400);
 });
+
+test('/v1/me tells apps the email, whether it is confirmed, and has_profile instead of a 404 for a new account (ADR 0042)', async () => {
+  const { Account } = await import('./agentApi.js');
+  const realFetch = globalThis.fetch;
+  let profiles: unknown[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith('/auth/v1/user')) return Response.json({ id: 'u1', email: 'ana@example.test', email_confirmed_at: '2026-11-01T00:00:00Z' });
+    if (url.includes('/rest/v1/profiles')) return Response.json(profiles);
+    return new Response('{}', { status: 404 });
+  }) as typeof fetch;
+  try {
+    const account = new Account({ SUPABASE_URL: 'https://db.test', SUPABASE_PUBLISHABLE_KEY: 'pk' } as never, 'token', 'u1', 'https://api.test');
+    const fresh = await account.me({ allowMissingProfile: true });
+    assert.deepEqual({ has_profile: fresh.has_profile, email: fresh.email, email_verified: fresh.email_verified, handle: fresh.handle }, { has_profile: false, email: 'ana@example.test', email_verified: true, handle: null });
+    await assert.rejects(account.me(), /no profile/, 'the person’s own /v1/me keeps its no_profile answer');
+    profiles = [{ id: 'u1', handle: 'ana', display_name: 'Ana', bio: '', avatar_url: null }];
+    const me = await account.me();
+    assert.equal(me.has_profile, true);
+    assert.equal(me.handle, 'ana');
+    assert.equal(me.email_verified, true);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

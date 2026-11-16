@@ -90,6 +90,8 @@ async function main() {
     `SUPABASE_PUBLISHABLE_KEY=${publishableKey}`,
     `MAIL_CREDENTIALS_KEY=${mailKey}`,
     `CONVO_APP_ORIGIN=${appURL}`,
+    // "Sign in with Open Media" sends people to the web app's sign-in gateway (ADR 0042).
+    `SIGN_IN_GATEWAY_URL=${appURL}/signin`,
     `EVENTS_PUBLIC_ORIGIN=${apiURL}`,
     'MAIL_ALLOW_LOCAL_SERVERS=true',
     // Lets profile import read the sample portfolio on localhost. Production never sets it.

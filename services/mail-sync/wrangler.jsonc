@@ -11,7 +11,9 @@
     "EVENTS_OWNER_USER_ID": "owner",
     "EVENTS_PUBLIC_ORIGIN": "https://convo-mail-sync.convo-mail-sync.workers.dev",
     // Hosts that serve the web app (built by `npm run build:web` at the repository root).
-    "WEB_APP_HOSTS": "openmedia.site,www.openmedia.site"
+    "WEB_APP_HOSTS": "openmedia.site,www.openmedia.site",
+    // The sign-in gateway "Sign in with Open Media" sends people to (ADR 0042).
+    "SIGN_IN_GATEWAY_URL": "https://openmedia.site/signin"
   },
   // openmedia.site and www serve the web app; api.openmedia.site is the API and agent site. The
   // workers.dev hostname stays on for installed apps, OAuth grants and existing links.

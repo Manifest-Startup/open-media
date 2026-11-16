@@ -51,6 +51,8 @@ import { refreshSignIn, requestSignInCode, SignInError, signOut, verifySignInCod
 import { handleSiteRequest, isSitePath, llmsTxt as siteLlmsTxt, searchDocs } from './agentSite.js';
 import { appViewHtml, appViewUri, mcpAppMimeType, postsViewUri } from './mcpAppView.js';
 import { authenticate, PasskeyStepRequired } from './session.js';
+import { RecoveryError, useRecoveryCode } from './recoveryCodes.js';
+import type { OAuthHelpers } from '@cloudflare/workers-oauth-provider';
 import { connectedCaller, IntegrationError, realtimeToken, storeUploadedVideo } from './appIntegrations.js';
 import { AppContext, isAppId, parseAppContext } from '../../../src/domain/appContext';
 import { isStoredPostVideo, maxVideoBytes } from '../../../src/domain/postVideo';
@@ -463,11 +465,54 @@ export class Account {
     return this.me();
   }
 
-  async me() {
-    const [profile] = await this.rest<{ id: string; handle: string; display_name: string; bio: string; avatar_url: string | null }[]>('GET', `/rest/v1/profiles?id=eq.${this.userId}&select=id,handle,display_name,bio,avatar_url`);
-    if (!profile) throw new AgentError(404, 'no_profile', 'This account has no profile yet. Choose a name and handle with PUT /v1/me/profile (or the set_up_profile tool), or in the app.');
+  /**
+   * The person's profile, with their account's email and whether it is confirmed (ADR 0042).
+   * Apps over /v1/connected also get has_profile:false instead of a 404 for a brand-new account.
+   */
+  async me(options: { allowMissingProfile?: boolean } = {}) {
+    const [[profile], user] = await Promise.all([
+      this.rest<{ id: string; handle: string; display_name: string; bio: string; avatar_url: string | null }[]>('GET', `/rest/v1/profiles?id=eq.${this.userId}&select=id,handle,display_name,bio,avatar_url`),
+      this.authUser(),
+    ]);
+    const account = { email: user?.email ?? null, email_verified: Boolean(user?.email_confirmed_at) };
+    if (!profile) {
+      if (!options.allowMissingProfile) throw new AgentError(404, 'no_profile', 'This account has no profile yet. Choose a name and handle with PUT /v1/me/profile (or the set_up_profile tool), or in the app.');
+      return { id: this.userId, has_profile: false, handle: null, displayName: null, bio: null, avatarUrl: null, display_name: null, avatar_url: null, url: null, ...account };
+    }
     // display_name and avatar_url are the integration contract's names (ADR 0041); the rest stay as they were.
-    return { id: profile.id, handle: profile.handle, displayName: profile.display_name, bio: profile.bio, avatarUrl: profile.avatar_url, display_name: profile.display_name, avatar_url: profile.avatar_url, url: `${this.origin}/v1/profiles/${profile.handle}` };
+    return { id: profile.id, has_profile: true, handle: profile.handle, displayName: profile.display_name, bio: profile.bio, avatarUrl: profile.avatar_url, display_name: profile.display_name, avatar_url: profile.avatar_url, url: `${this.origin}/v1/profiles/${profile.handle}`, ...account };
+  }
+
+  /** The signed-in person's own auth record (email and confirmation), or undefined if Supabase can't say. */
+  private async authUser(): Promise<{ email?: string; email_confirmed_at?: string | null } | undefined> {
+    try {
+      const response = await fetch(`${this.env.SUPABASE_URL.replace(/\/$/, '')}/auth/v1/user`, { headers: { apikey: this.env.SUPABASE_PUBLISHABLE_KEY, authorization: `Bearer ${this.token}` } });
+      return response.ok ? await response.json() as { email?: string; email_confirmed_at?: string | null } : undefined;
+    } catch { return undefined; }
+  }
+
+  /** Apps the person signed in to with Open Media (OAuth grants), newest first (ADR 0042). */
+  async connectedApps(provider: OAuthHelpers | undefined) {
+    if (!provider) return { apps: [], available: false };
+    const apps: Array<{ id: string; client_id: string; name: string; logo_uri: string | null; scopes: string[]; connected_at: string }> = [];
+    let cursor: string | undefined;
+    do {
+      const page = await provider.listUserGrants(this.userId, { limit: 100, cursor });
+      for (const grant of page.items) {
+        const metadata = (grant.metadata ?? {}) as { clientName?: unknown; logoUri?: unknown };
+        apps.push({ id: grant.id, client_id: grant.clientId, name: typeof metadata.clientName === 'string' ? metadata.clientName : grant.clientId, logo_uri: typeof metadata.logoUri === 'string' ? metadata.logoUri : null, scopes: grant.scope, connected_at: new Date(grant.createdAt * (grant.createdAt < 1e12 ? 1000 : 1)).toISOString() });
+      }
+      cursor = page.cursor;
+    } while (cursor && apps.length < 500);
+    return { apps: apps.sort((a, b) => b.connected_at.localeCompare(a.connected_at)), available: true };
+  }
+
+  /** Disconnects one app: its tokens stop working at once, and so does the session it held. */
+  async revokeApp(provider: OAuthHelpers | undefined, grantId: string) {
+    if (!provider) throw new AgentError(503, 'unavailable', 'Connected apps can’t be managed on this server.');
+    if (!/^[\w:-]{1,200}$/.test(grantId)) throw new AgentError(400, 'bad_request', 'Unknown app connection.');
+    await provider.revokeGrant(grantId, this.userId);
+    return { revoked: true };
   }
 
   /**
@@ -1293,7 +1338,7 @@ export class Account {
   importOpml(body: Record<string, unknown>) { return webFeedCall(() => this.webFeedAccount.importOpml(body)); }
   async exportOpml() {
     const me = await this.me().catch(() => undefined);
-    return this.webFeedAccount.exportOpml(me?.displayName);
+    return this.webFeedAccount.exportOpml(me?.displayName ?? undefined);
   }
 
   async myFeed(options: { lens?: unknown; manifest?: unknown; request?: unknown; sources?: Source[]; kind?: 'feed' | 'clips'; cursor?: string; app?: string }) {
@@ -1903,9 +1948,12 @@ function baseOpenApi(origin: string) {
       '/v1/auth/verify': { post: { summary: 'Exchange the emailed code for the person’s session (access_token, refresh_token)', requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['email', 'code'], properties: { email: { type: 'string', format: 'email' }, code: { type: 'string', pattern: '^[0-9 ]{6,12}$' } } } } } }, responses: { 200: ok('Session'), 400: error, 429: error } } },
       '/v1/auth/refresh': { post: { summary: 'Renew a session with its refresh_token', requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['refresh_token'], properties: { refresh_token: { type: 'string' } } } } } }, responses: { 200: ok('Session'), 400: error, 401: error } } },
       '/v1/auth/sign-out': { post: { summary: 'End this session', security: bearer, responses: { 200: ok('Signed out'), 401: error } } },
+      '/v1/auth/recovery': { post: { summary: 'Use a one-time recovery code with a session that still owes its second step: removes the account’s second-step factors (ADR 0042)', security: bearer, requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['code'], properties: { code: { type: 'string' } } } } } }, responses: { 200: ok('Recovered'), 400: error, 401: error, 429: error } } },
+      '/v1/me/apps': { get: { summary: 'Apps you signed in to with Open Media (OAuth grants)', security: bearer, responses: { 200: ok('Connected apps'), 401: error } } },
+      '/v1/me/apps/{grantId}': { delete: { summary: 'Disconnect an app', security: bearer, parameters: [{ name: 'grantId', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: ok('Disconnected'), 401: error } } },
       '/v1/me/profile': { put: { summary: 'Choose the name and handle of a new account', security: bearer, requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['displayName', 'handle'], properties: { displayName: { type: 'string', maxLength: 80 }, handle: { type: 'string', pattern: '^[a-z0-9_]{3,24}$' } } } } } }, responses: { 200: ok('Profile'), 400: error, 401: error, 409: error } } },
       '/v1/me': {
-        get: { summary: 'Your profile', security: bearer, responses: { 200: ok('Profile'), 401: error } },
+        get: { summary: 'Your profile, email and email_verified. has_profile is false (instead of 404 no_profile) over /v1/connected/me for a new account', security: bearer, responses: { 200: ok('Profile'), 401: error, 404: error } },
         delete: { summary: 'Delete your account (irreversible)', security: bearer, requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['confirmation'], properties: { confirmation: { type: 'string', const: 'delete my account' } } } } } }, responses: { 200: ok('Deleted'), 400: error, 401: error } },
       },
       '/v1/me/posts': { post: { summary: 'Publish a public post, optionally with a video from POST /v1/me/media/videos and an app context (ADR 0041)', security: bearer, requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: {
@@ -2199,7 +2247,10 @@ export async function handleAgentRequest(request: Request, env: AgentEnv, intern
         if (path === '/v1/auth/verify') return json(await verifySignInCode(env, origin, body), 0);
         if (path === '/v1/auth/refresh') return json(await refreshSignIn(env, origin, body), 0);
         if (path === '/v1/auth/sign-out') return json(await signOut(env, request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')), 0);
+        // A recovery code, with the person's own session that still owes its second step (ADR 0042).
+        if (path === '/v1/auth/recovery') return json(await useRecoveryCode(request, env, body), 0);
       } catch (error) {
+        if (error instanceof RecoveryError) return json({ error: { code: error.code, message: error.message } }, 0, error.status);
         if (!(error instanceof SignInError)) throw error;
         const response = json({ error: { code: error.code, message: error.message } }, 0, error.status);
         if (error.retryAfterSeconds) response.headers.set('retry-after', String(error.retryAfterSeconds));
@@ -2295,7 +2346,13 @@ export async function handleAgentRequest(request: Request, env: AgentEnv, intern
     // Idempotency-Key: a retried write with the same key returns the first result instead of a copy.
     const idempotencyKey = request.headers.get('idempotency-key')?.trim();
     if (idempotencyKey !== undefined && !uuid.test(idempotencyKey)) throw new AgentError(400, 'bad_request', 'Idempotency-Key must be a UUID.');
-    if (request.method === 'GET' && path === '/v1/me') return json(await account.me(), 0);
+    if (request.method === 'GET' && path === '/v1/me') return json(await account.me({ allowMissingProfile: Boolean(connectedCaller(request)) }), 0);
+    // Apps signed in with Open Media (ADR 0042). Never over /v1/connected: one app can't manage the others.
+    const appGrant = path.match(/^\/v1\/me\/apps(?:\/([^/]+))?$/);
+    if (appGrant && connectedCaller(request)) throw new AgentError(403, 'forbidden', 'Apps can’t list or disconnect other apps.');
+    const provider = (env as { OAUTH_PROVIDER?: OAuthHelpers }).OAUTH_PROVIDER;
+    if (appGrant && !appGrant[1] && request.method === 'GET') return json(await account.connectedApps(provider), 0);
+    if (appGrant?.[1] && request.method === 'DELETE') return json(await account.revokeApp(provider, decodeURIComponent(appGrant[1])), 0);
     if (request.method === 'PUT' && path === '/v1/me/profile') return json(await account.setUpProfile(body), 0);
     if (request.method === 'POST' && path === '/v1/me/posts') {
       const clientId = idempotencyKey ?? (typeof body.client_id === 'string' && uuid.test(body.client_id) ? body.client_id : undefined);
