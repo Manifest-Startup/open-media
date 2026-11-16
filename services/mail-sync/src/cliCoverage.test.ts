@@ -84,8 +84,12 @@ test('every MCP tool in agentApi.ts is a CLI command that calls that tool', asyn
   // Built-ins only shadow a tool name on purpose; the shadowed tools stay reachable via `tool <name>`.
   const shadowed = tools.filter((tool) => kebab(tool.name) in builtins).map((tool) => tool.name).sort();
   assert.deepEqual(shadowed, ['search', 'set_up_profile']);
-  // Publishing, sending, paying and deleting tools ask first.
-  for (const name of ['publish_post', 'send_message', 'send_email', 'delete_my_account', 'start_payment', 'remove_wallet', 'comment_on_post']) {
+  // No tool that changes anything runs without asking (or --yes): only read-only tools skip it.
+  const unconfirmedWrites = tools.filter((tool) => tool.annotations?.readOnlyHint !== true && !needsConfirmation(tool)).map((tool) => tool.name);
+  assert.deepEqual(unconfirmedWrites, []);
+  for (const name of ['publish_post', 'send_message', 'answer_appeal', 'decide_listing', 'delete_my_account', 'start_payment', 'follow']) {
     assert.equal(needsConfirmation(tools.find((tool) => tool.name === name)!), true, name);
   }
+  // A tool whose description asks for confirmation always asks.
+  for (const tool of tools.filter((item) => /\bconfirm\b/i.test(item.description ?? ''))) assert.equal(needsConfirmation(tool), true, tool.name);
 });

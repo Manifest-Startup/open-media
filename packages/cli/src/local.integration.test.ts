@@ -71,8 +71,8 @@ test('the CLI against the local stack: email-code login, every tool listed, read
   const id = JSON.parse(published.out).id as string;
   const read = await om('get-post', id, '--json');
   assert.equal(JSON.parse(read.out).text, 'Synthetic CLI test post');
-  assert.equal((await om('set-read-receipts', '--no-share')).code, 0);
-  assert.equal((await om('set-read-receipts', '--share')).code, 0);
+  assert.equal((await om('set-read-receipts', '--no-share', '--yes')).code, 0);
+  assert.equal((await om('set-read-receipts', '--share', '--yes')).code, 0);
   assert.equal((await om('delete-post', '--id', id, '--yes')).code, 0);
   assert.equal((await om('get-post', id)).code, 1, 'a deleted post is gone');
 

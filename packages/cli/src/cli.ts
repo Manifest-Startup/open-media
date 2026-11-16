@@ -7,8 +7,8 @@
  * search, post …) sit on top. `login` signs in through the browser (OAuth 2.1 + PKCE, loopback
  * redirect) or, with an email, by a code from the inbox. `api` reaches any REST route.
  *
- * Human-readable by default; --json prints JSON for scripts and agents. Publishing, sending,
- * paying and deleting ask first (or need --yes). Exit codes: 0 done, 1 the API refused or failed,
+ * Human-readable by default; --json prints JSON for scripts and agents. Every tool that changes
+ * something asks first (or needs --yes). Exit codes: 0 done, 1 the API refused or failed,
  * 2 the command was wrong.
  */
 import { createInterface } from 'node:readline/promises';
@@ -83,7 +83,7 @@ ${section('setup')}
 Options
   --json             Print JSON (for scripts and agents)
   --base-url <url>   API origin (default ${defaultBaseUrl}, or OPEN_MEDIA_BASE_URL)
-  --yes, -y          Don’t ask before publishing, sending, paying or deleting
+  --yes, -y          Don’t ask before running a tool that changes something
   --refresh-tools    Read the tool list from the server now instead of the cache
   -h, --help         Show help (open-media <command> --help for one command)
   -v, --version      Show the version
@@ -312,8 +312,8 @@ async function dispatchTool(ctx: Context, word: string, rest: string[], display:
   ctx.access = await currentAccess(ctx.env, ctx.baseUrl);
   let catalog = await catalogFor(ctx);
   let tool = findTool(catalog, word);
-  // Not in the cached list: read it once more, so tools added on the server work straight away.
-  if (!tool && catalog.fromCache) { catalog = await catalogFor(ctx, true); tool = findTool(catalog, word); }
+  // Not in the list (any part of which may be cached): read it once more, so tools added on the server work straight away.
+  if (!tool && !ctx.refreshTools) { catalog = await catalogFor(ctx, true); tool = findTool(catalog, word); }
   if (!tool) throw new UsageError(`Unknown command “${word}”. Run open-media tools to list everything${ctx.access ? '' : ' (sign in to see your account’s tools)'}, or open-media --help.`);
   // The tool's own flags win over global ones of the same name.
   const own = new Set(flagsFor(tool.inputSchema).map((flag) => flag.flag));
@@ -446,7 +446,9 @@ async function runBuiltin(ctx: Context, command: string, parsed: Parsed): Promis
       const target = rest[0];
       if (!target) { console.log(mainHelp()); return 0; }
       if (builtins[target]) { console.log(`open-media ${builtins[target].usage}\n\n${builtins[target].summary}.`); return 0; }
-      return run([target, '--help'], ctx.env, ctx.input);
+      // Keep the global options (server, output) for the tool's own help.
+      const globals = ['--base-url', ctx.baseUrl, ...(ctx.json ? ['--json'] : []), ...(ctx.yes ? ['--yes'] : []), ...(ctx.refreshTools ? ['--refresh-tools'] : [])];
+      return run([target, '--help', ...globals], ctx.env, ctx.input);
     }
     default:
       throw new UsageError(`Unknown command “${command}”. Run open-media --help.`);

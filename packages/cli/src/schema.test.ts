@@ -91,13 +91,16 @@ test('--input takes JSON, a file or stdin, and flags override it', () => {
   assert.throws(() => buildArguments(demo, ['--input', '[1]']), /JSON object/);
 });
 
-test('confirmation follows the annotations and the tool’s verb', () => {
+test('confirmation is safe by default: only read-only tools skip it', () => {
   assert.equal(needsConfirmation({ name: 'get_feed', annotations: { readOnlyHint: true } }), false);
+  assert.equal(needsConfirmation({ name: 'list_things' }), false, 'an unmarked tool with a reading name');
   assert.equal(needsConfirmation({ name: 'remove_wallet', annotations: { readOnlyHint: false, destructiveHint: true } }), true);
-  for (const name of ['publish_post', 'send_message', 'comment_on_post', 'reshare_post', 'start_payment', 'submit_payment_transaction', 'disconnect_chat_network', 'block_person']) {
+  for (const name of ['publish_post', 'send_message', 'follow', 'set_read_receipts', 'tune_feed_lens', 'answer_appeal', 'decide_listing', 'mark_conversation_read']) {
     assert.equal(needsConfirmation({ name, annotations: { readOnlyHint: false } }), true, name);
   }
-  for (const name of ['follow', 'set_read_receipts', 'tune_feed_lens', 'mark_conversation_read']) assert.equal(needsConfirmation({ name, annotations: { readOnlyHint: false } }), false, name);
+  assert.equal(needsConfirmation({ name: 'get_verification_task', annotations: { readOnlyHint: false } }), true, 'a write is a write whatever its name');
+  assert.equal(needsConfirmation({ name: 'brand_new_action' }), true, 'unmarked and not a read: asks');
+  assert.equal(needsConfirmation({ name: 'get_draft', description: 'Confirm the text with the person first.', annotations: { readOnlyHint: true } }), true, 'the description asks for confirmation');
 });
 
 test('help comes from the description and schema', () => {

@@ -364,7 +364,7 @@ open-media api GET /v1/me/follows
 source <(open-media completion zsh)
 \`\`\`
 
-\`open-media login\` registers the CLI as the public OAuth client “Open Media CLI” and listens on a random \`127.0.0.1\` port for the redirect, so it shows in Sign-in and security → Connected apps and \`open-media logout\` revokes it. On a machine without a browser, \`open-media login you@example.com\` signs in with an emailed code. Publishing, sending, paying and deleting ask first (or take \`--yes\`); \`--json\` prints JSON; exit codes are 0 done, 1 the API refused, 2 the command was wrong.
+\`open-media login\` registers the CLI as the public OAuth client “Open Media CLI” and listens on a random \`127.0.0.1\` port for the redirect, so it shows in Sign-in and security → Connected apps and \`open-media logout\` revokes it. On a machine without a browser, \`open-media login you@example.com\` signs in with an emailed code. Every tool that changes something asks first (or takes \`--yes\`); \`--json\` prints JSON; exit codes are 0 done, 1 the API refused, 2 the command was wrong.
 
 ## Access tokens
 

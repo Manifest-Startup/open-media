@@ -30,7 +30,7 @@ The CLI reads the tool list from the server (`tools/list` on `/open/mcp`, plus `
 - Required fields can be given in order without their flag: `open-media get-post <id>`, `open-media publish-post Hello there`.
 - `open-media tools [--search words]` lists every tool, marking those that need an account and those that ask first.
 
-Publishing, sending, paying and deleting ask before running, or need `--yes` when there's no terminal.
+Every tool that changes something (publishing, sending, paying, deleting, settings) asks before running, or needs `--yes` when there's no terminal. Only read-only tools run straight away.
 
 ## Built-in commands
 

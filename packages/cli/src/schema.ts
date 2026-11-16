@@ -218,11 +218,23 @@ export function buildArguments(tool: Tool, argv: string[], options: { stdin?: ()
   return args;
 }
 
-/** Publishing, sending, paying and deleting ask first; reads and quiet settings changes don't. */
+/** Tool names that only read, used when a server doesn't say. */
+export const readPrefix = /^(get|list|search|read|find|show|preview|about|check|export|my)(_|$)/;
+
+/** A description that asks the agent to check with the person first. */
+const asksForConfirmation = /\bconfirm\b|\bask (the person|them|first|before)\b/i;
+
+/**
+ * Safe by default: every tool asks first (or takes --yes) unless it is read-only: marked
+ * readOnlyHint, or (when unmarked) named like a read. A description that asks for confirmation always asks.
+ */
 export function needsConfirmation(tool: Tool): boolean {
-  if (tool.annotations?.readOnlyHint) return false;
   if (tool.annotations?.destructiveHint) return true;
-  return /^(publish|send|comment|reshare|delete|remove|disconnect|block|report|start_payment|submit_payment|start_payout)(_|$)/.test(tool.name);
+  if (asksForConfirmation.test(tool.description ?? '')) return true;
+  if (tool.annotations?.readOnlyHint === true) return false;
+  // A server that marks a tool as a write is believed, whatever its name.
+  if (tool.annotations?.readOnlyHint === false) return true;
+  return !readPrefix.test(tool.name);
 }
 
 function flagUsage(flag: ToolFlag): string {
@@ -258,6 +270,6 @@ export function toolHelp(tool: Tool, command: string): string {
       lines.push(usage.length + 2 > width && text ? `  ${usage}\n  ${''.padEnd(width)}${text}` : `  ${usage.padEnd(width)}${text}`.trimEnd());
     }
   }
-  lines.push('', 'Also', '  --input <json|@file|->  All arguments as one JSON object (flags override it)', '  --json                  Print the raw result', '  --yes                   Don’t ask before publishing, sending, paying or deleting');
+  lines.push('', 'Also', '  --input <json|@file|->  All arguments as one JSON object (flags override it)', '  --json                  Print the raw result', '  --yes                   Don’t ask before running a tool that changes something');
   return lines.join('\n');
 }

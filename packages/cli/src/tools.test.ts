@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readdirSync } from 'node:fs';
+import { readdirSync, readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import { commandFor } from './cli';
@@ -118,8 +119,10 @@ test('publishing and destructive tools ask first: --yes, a yes at the prompt, or
   assert.equal(accepted.code, 0);
   assert.match(asked, /Delete a post as you[\s\S]*id: p1[\s\S]*\[y\/N\]/);
   assert.equal((await capture(['publish-post', 'Hi', '--yes'], env, server.fetch)).code, 0);
-  assert.equal((await capture(['set-read-receipts', '--no-enabled'], env, server.fetch)).code, 0, 'quiet settings changes don’t ask');
-  assert.deepEqual(called(), ['delete_post', 'publish_post', 'set_read_receipts']);
+  assert.equal((await capture(['set-read-receipts', '--no-enabled'], env, server.fetch)).code, 2, 'settings changes ask too');
+  assert.equal((await capture(['set-read-receipts', '--no-enabled', '--yes'], env, server.fetch)).code, 0);
+  assert.equal((await capture(['get-me'], env, server.fetch)).code, 0, 'reads never ask');
+  assert.deepEqual(called(), ['delete_post', 'publish_post', 'set_read_receipts', 'get_me']);
 });
 
 test('tool errors exit 1, bad arguments exit 2', async () => {
@@ -191,4 +194,29 @@ test('the MCP client pages through tools/list', async () => {
   const tools = await new McpClient({ endpoint: 'https://api.test/open/mcp', fetch: fetchImpl }).listTools();
   assert.deepEqual(tools.map((tool) => tool.name), ['a', 'b']);
   assert.equal(page, 2);
+});
+
+test('a missing command reads the list again even when only part of it was cached', async () => {
+  const dirs = tempDirs();
+  const env = { ...base, ...dirs, OPEN_MEDIA_TOKEN: 't' };
+  // The account list is cached; the public one is not (as after signing in within the TTL).
+  await capture(['tools'], env, fakeOpenMedia({ publicTools: sampleTools, accountTools: sampleAccountTools }).fetch);
+  for (const file of readdirSync(dirs.OPEN_MEDIA_CACHE_DIR)) {
+    const path = join(dirs.OPEN_MEDIA_CACHE_DIR, file);
+    if (JSON.parse(readFileSync(path, 'utf8')).endpoint.endsWith('/open/mcp')) rmSync(path);
+  }
+  const newer = fakeOpenMedia({ publicTools: sampleTools, accountTools: [...sampleAccountTools, { name: 'new_account_tool', annotations: { readOnlyHint: true }, inputSchema: { type: 'object', properties: {} } }] });
+  const result = await capture(['new-account-tool'], env, newer.fetch);
+  assert.equal(result.code, 0, result.err);
+  assert.ok(newer.calls.some((item) => item.rpc?.method === 'tools/call' && item.rpc.params?.name === 'new_account_tool'));
+});
+
+test('help <tool> keeps --base-url and the other global options', async () => {
+  const server = fakeOpenMedia({ publicTools: sampleTools });
+  const realOrigin: string[] = [];
+  const watch = (async (input: URL | string, init?: RequestInit) => { realOrigin.push(new URL(String(input)).origin); return server.fetch(input, init); }) as typeof fetch;
+  const result = await capture(['help', 'get-feed', '--base-url', 'https://other.test', '--json'], { ...tempDirs() }, watch);
+  assert.equal(result.code, 0, result.err);
+  assert.match(result.out, /open-media get-feed/);
+  assert.ok(realOrigin.length && realOrigin.every((origin) => origin === 'https://other.test'), realOrigin.join(','));
 });
