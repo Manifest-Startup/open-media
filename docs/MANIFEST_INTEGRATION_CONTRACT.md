@@ -7,7 +7,7 @@ Base: `https://api.openmedia.site` (local: the URL `npm run local` prints for th
   `client_id = https://manifeststartup.com/oauth/open-media-client.json`
   (doc: `{client_id, client_name:"Manifest", client_uri:"https://manifeststartup.com", redirect_uris:["https://manifeststartup.com/api/integrations/open-media/callback"], grant_types:["authorization_code","refresh_token"], response_types:["code"], token_endpoint_auth_method:"none", scope:"account"}`).
   Open Media must accept this client for scope `account` (the "Sign in with Open Media" grant). If CIMD is not supported for this grant, OM adds an allowlist secret `OAUTH_TRUSTED_CLIENTS` instead — but the Manifest side must not change.
-- Endpoints (existing provider): `GET /authorize`, `POST /token` (authorization_code + refresh_token), discovery `/.well-known/oauth-authorization-server`. Access token ~1 h, refresh 90 d.
+- Endpoints (existing provider): `GET /authorize`, `POST /oauth/token` (authorization_code + refresh_token; read `token_endpoint` from discovery), discovery `/.well-known/oauth-authorization-server`. Access token ~1 h, refresh 90 d.
 - **REST with OAuth (new):** every `/v1/me/*` route is also reachable as `/v1/connected/me/*` with `Authorization: Bearer <OAuth access token>`. Same request/response bodies. `/v1/me/*` with Supabase session tokens keeps working unchanged.
 
 ## 2. Messaging (under `/v1/connected`)

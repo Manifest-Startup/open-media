@@ -76,7 +76,7 @@ const handlePattern = /^[a-z0-9_]{3,24}$/i;
 const publicHeaders: Record<string, string> = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'access-control-allow-headers': 'authorization, content-type, mcp-protocol-version, mcp-session-id',
+  'access-control-allow-headers': 'authorization, content-type, idempotency-key, mcp-protocol-version, mcp-session-id',
   'access-control-expose-headers': 'mcp-session-id',
   'x-content-type-options': 'nosniff',
   // About 120 requests a minute per client (the Cloudflare limiter does not report what is left).
