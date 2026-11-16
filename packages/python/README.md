@@ -25,4 +25,6 @@ me = OpenMedia(token=os.environ["OPEN_MEDIA_TOKEN"])
 me.publish("Hello from my agent")
 ```
 
+A web app that signed someone in with "Sign in with Open Media" (OAuth) passes `connected=True`; account calls then go to `/v1/connected/me/...` (ADR 0041). `start_conversation(handle, context)`, `messages`, `send_message(..., client_id)`, `upload_video`, `publish(..., video=, context=)`, `app_posts("manifest", kind="clips")`, `realtime_token()` and `verify_webhook(secret, headers, raw_body)` cover the app-integration routes.
+
 Writes send an `Idempotency-Key` automatically, a 429 is retried after `Retry-After`, and errors raise `OpenMediaError` with `status`, `code` and `message`. Docs: https://api.openmedia.site/docs · MIT licence.

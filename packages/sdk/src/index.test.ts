@@ -47,3 +47,35 @@ test('signing in with an email code makes the client act as that person', async 
   assert.equal(net.calls[1].url, 'https://api.test/v1/auth/verify');
   assert.equal((net.calls[2].init.headers as Record<string, string>).authorization, 'Bearer at1');
 });
+
+test('a connected app’s account calls go to /v1/connected/me and read OAuth-style errors', async () => {
+  const net = fake([Response.json({ conversations: [], data: [] }), Response.json({ error: 'not_found', error_description: 'Post not found.' }, { status: 404 })]);
+  const om = new OpenMedia({ baseUrl: 'https://api.test', token: 'oauth', connected: true, fetch: net.impl });
+  await om.conversations({ app: 'manifest' });
+  assert.equal(net.calls[0].url, 'https://api.test/v1/connected/me/conversations?app=manifest');
+  await assert.rejects(om.deletePost('p1'), (error: OpenMediaError) => error.status === 404 && error.code === 'not_found' && error.message === 'Post not found.');
+  assert.equal(net.calls[1].url, 'https://api.test/v1/connected/me/posts/p1');
+});
+
+test('videos upload as the raw body, then publish with the returned object and a context', async () => {
+  const video = { path: 'u/v.mp4', posterPath: null, durationSeconds: 8, width: 720, height: 1280, contentType: 'video/mp4', sha256: 'a'.repeat(64), sizeBytes: 3, url: 'https://x' };
+  const net = fake([Response.json({ video }, { status: 201 }), Response.json({ id: 'p1' }, { status: 201 })]);
+  const om = new OpenMedia({ baseUrl: 'https://api.test', token: 'tok', fetch: net.impl });
+  const bytes = new Uint8Array([1, 2, 3]);
+  assert.deepEqual(await om.uploadVideo(bytes, 'video/mp4'), video);
+  assert.equal((net.calls[0].init.headers as Record<string, string>)['content-type'], 'video/mp4');
+  assert.equal(net.calls[0].init.body, bytes);
+  await om.publish('', { video, context: { app: 'manifest', idea_id: '42' } });
+  assert.deepEqual(JSON.parse(String(net.calls[1].init.body)), { text: '', video, context: { app: 'manifest', idea_id: '42' } });
+});
+
+test('webhook signatures are checked over timestamp.body, within five minutes', async () => {
+  const { createHmac } = await import('node:crypto');
+  const { verifyWebhook } = await import('./index');
+  const body = '{"id":"d1","type":"message.created"}';
+  const headers = (timestamp: number, secret = 's'.repeat(32)) => new Headers({ 'x-open-media-timestamp': String(timestamp), 'x-open-media-signature': `sha256=${createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex')}` });
+  assert.equal(await verifyWebhook('s'.repeat(32), headers(1_800_000_000), body, { now: 1_800_000_100_000 }), true);
+  assert.equal(await verifyWebhook('s'.repeat(32), headers(1_800_000_000), body, { now: 1_800_000_400_000 }), false, 'too old');
+  assert.equal(await verifyWebhook('s'.repeat(32), headers(1_800_000_000, 'w'.repeat(32)), body, { now: 1_800_000_000_000 }), false, 'wrong secret');
+  assert.equal(await verifyWebhook('s'.repeat(32), headers(1_800_000_000), `${body} `, { now: 1_800_000_000_000 }), false, 'changed body');
+});
