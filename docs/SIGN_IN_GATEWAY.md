@@ -1,5 +1,7 @@
 # One sign-in for Open Media and Manifest (spec, 2026-11-16)
 
+Status: built on `feat/sign-in-gateway`, not deployed. Decisions, verification and what is left: [ADR 0042](adrs/0042-one-sign-in-gateway-passkeys-and-mfa.md). The old Worker HTML forms were removed rather than kept as a fallback (ADR 0042, decision 4).
+
 Owner decisions:
 - **Identity:** Open Media is the only identity provider. Manifest signs in only with "Continue with Open Media" (OAuth 2.1 + PKCE). Manifest auto-links existing accounts by verified email. Guests can still try Manifest, and upgrade by continuing with Open Media.
 - **Passkeys:** passkey-first sign-in (no email or password) through Supabase passkeys (`/auth/v1/passkeys/*`, supabase-js `auth.signInWithPasskey`, `auth.experimental.passkey: true`). Email code or one-tap link, and password, stay for new devices.
