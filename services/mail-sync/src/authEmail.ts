@@ -12,6 +12,8 @@ export interface AuthEmailEnv {
   SUPABASE_URL: string;
   SEND_EMAIL_HOOK_SECRET?: string;
   AUTH_EMAIL_FROM?: string;
+  /** Pending "Connect an app" sign-ins (accountOAuth.ts): their one-tap link returns to that page. */
+  OAUTH_KV?: Pick<KVNamespace, 'get'>;
   EMAIL?: { send(message: { from: string | { email: string; name: string }; to: string; subject: string; html: string; text: string; headers?: Record<string, string> }): Promise<{ messageId?: string }> };
 }
 
@@ -119,10 +121,16 @@ body{margin:0;padding:0;background:#f4f3ef}
 }
 
 /** The emails one hook call should send (an email change with secure change on sends two). */
-export function authEmailsFor(payload: HookPayload, supabaseUrl: string): AuthEmail[] {
+export function authEmailsFor(payload: HookPayload, supabaseUrl: string, connectLink?: (tokenHash: string, type: 'magiclink' | 'signup') => string): AuthEmail[] {
   const { user, email_data: data } = payload;
   const action = data.email_action_type;
-  const link = (hash: string) => (action === 'reauthentication' ? undefined : verifyLink(supabaseUrl, hash, action === 'email' ? 'magiclink' : action, data.redirect_to));
+  const signInAction = action === 'email' || action === 'magiclink' || action === 'signup';
+  const link = (hash: string) => {
+    if (action === 'reauthentication') return undefined;
+    // A sign-in started on an app's "Connect to Open Media" page: the button finishes that connection.
+    if (connectLink && signInAction) return connectLink(hash, action === 'signup' ? 'signup' : 'magiclink');
+    return verifyLink(supabaseUrl, hash, action === 'email' ? 'magiclink' : action, data.redirect_to);
+  };
   if (action === 'email_change' && user.new_email) {
     const emails: AuthEmail[] = [];
     if (data.token_hash) emails.push(renderAuthEmail({ to: user.email, action, code: data.token, link: link(data.token_hash) }));
@@ -145,7 +153,10 @@ export async function handleSendEmailHook(request: Request, env: AuthEmailEnv): 
   if (!payload?.user?.email || !payload.email_data?.email_action_type) return hookError(400, 'Invalid payload.');
   const from = { email: env.AUTH_EMAIL_FROM ?? 'security@openmedia.site', name: 'Open Media' };
   try {
-    for (const email of authEmailsFor(payload, env.SUPABASE_URL)) {
+    const origin = new URL(request.url).origin;
+    const connect = connectionFromRedirect(payload.email_data.redirect_to, origin) ?? await pendingConnection(env, payload.user.email);
+    const connectLink = connect ? (hash: string, type: 'magiclink' | 'signup') => `${origin}/authorize/account/link?challenge=${connect}&token_hash=${encodeURIComponent(hash)}&type=${type}` : undefined;
+    for (const email of authEmailsFor(payload, env.SUPABASE_URL, connectLink)) {
       await env.EMAIL.send({ from, to: email.to, subject: email.subject, html: email.html, text: email.text });
     }
   } catch (error) {
@@ -153,4 +164,26 @@ export async function handleSendEmailHook(request: Request, env: AuthEmailEnv): 
     return hookError(502, 'The email could not be sent. Try again in a minute.');
   }
   return new Response('{}', { headers: { 'content-type': 'application/json' } });
+}
+
+/** The app connection a sign-in was started from, when Supabase passes its page back as redirect_to. */
+export function connectionFromRedirect(redirectTo: string | undefined, origin: string): string | undefined {
+  try {
+    const url = new URL(redirectTo ?? '');
+    if (url.origin !== origin || url.pathname !== '/authorize/account/link') return undefined;
+    const id = url.searchParams.get('challenge') ?? '';
+    return /^[0-9a-f]{64}$/.test(id) ? id : undefined;
+  } catch { return undefined; }
+}
+
+/** The pending app connection (challenge id) this email address asked for, if any. */
+export async function pendingConnection(env: Pick<AuthEmailEnv, 'OAUTH_KV'>, email: string): Promise<string | undefined> {
+  if (!env.OAUTH_KV) return undefined;
+  const id = await env.OAUTH_KV.get(`account-email-link:${await emailKey(email)}`);
+  return id && /^[0-9a-f]{64}$/.test(id) ? id : undefined;
+}
+
+export async function emailKey(email: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(email.trim().toLowerCase()));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
