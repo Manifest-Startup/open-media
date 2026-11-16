@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHmac, randomBytes } from 'node:crypto';
 import test from 'node:test';
 
-import { authEmailsFor, connectionFromRedirect, handleSendEmailHook, renderAuthEmail, verifyHookSignature } from './authEmail.js';
+import { authEmailsFor, connectionFromRedirect, emailSender, handleSendEmailHook, renderAuthEmail, verifyHookSignature } from './authEmail.js';
 
 const key = randomBytes(32);
 const secret = `v1,whsec_${key.toString('base64')}`;
@@ -66,4 +66,20 @@ test('a sign-in started on an app’s Connect page gets a button that finishes t
   assert.equal(connectionFromRedirect('https://api.test/authorize/account/link?challenge=nope', 'https://api.test'), undefined);
   // An ordinary sign-in keeps the normal link.
   assert.ok(authEmailsFor(payload as never, 'https://db.test')[0].text.includes('https://db.test/auth/v1/verify'));
+});
+
+test('with a Resend key, sign-in emails go through Resend from security@openmedia.site, and its errors become a 502', async () => {
+  const calls: { url: string; headers: Record<string, string>; body: { from: string; to: string[]; subject: string; html: string; text: string } }[] = [];
+  const ok = (async (url: string, init: RequestInit) => { calls.push({ url, headers: init.headers as Record<string, string>, body: JSON.parse(String(init.body)) }); return new Response('{"id":"e1"}', { status: 200 }); }) as unknown as typeof fetch;
+  const env = { SUPABASE_URL: 'https://db.test', SEND_EMAIL_HOOK_SECRET: secret, RESEND_API_KEY: 're_test_key' };
+  const body = JSON.stringify(payload);
+  assert.equal((await handleSendEmailHook(new Request('https://api.test/auth/hooks/send-email', { method: 'POST', headers: sign(body, 'msg_r1'), body }), env, ok)).status, 200);
+  assert.equal(calls[0].url, 'https://api.resend.com/emails');
+  assert.equal(calls[0].headers.authorization, 'Bearer re_test_key');
+  assert.equal(calls[0].body.from, 'Open Media <security@openmedia.site>');
+  assert.deepEqual(calls[0].body.to, ['ada@example.test']);
+  assert.ok(calls[0].body.text.includes('1234 5678') || calls[0].body.text.includes('12345678'));
+  const refused = (async () => new Response('{"message":"The openmedia.site domain is not verified."}', { status: 403 })) as unknown as typeof fetch;
+  assert.equal((await handleSendEmailHook(new Request('https://api.test/auth/hooks/send-email', { method: 'POST', headers: sign(body, 'msg_r2'), body }), env, refused)).status, 502);
+  assert.equal(emailSender({}), undefined, 'no sender configured');
 });
