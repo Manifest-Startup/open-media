@@ -99,7 +99,7 @@ export class OpenMediaError extends Error {
   }
 }
 
-type Query = Record<string, string | number | undefined | null>;
+export type Query = Record<string, string | number | undefined | null>;
 
 export class OpenMedia {
   private readonly baseUrl: string;
@@ -305,6 +305,16 @@ export class OpenMedia {
 
   exportData(): Promise<Record<string, unknown>> {
     return this.get('/v1/me/export');
+  }
+
+  /**
+   * Any REST route, for what the helpers above don't cover: `api('GET', '/v1/me/follows')`. With
+   * `connected`, /v1/me/… goes to /v1/connected/me/… as usual. Retries 429s and sends an
+   * Idempotency-Key on writes, like every other call.
+   */
+  api<T = unknown>(method: string, path: string, options: { query?: Query; body?: unknown } = {}): Promise<T> {
+    if (!path.startsWith('/')) throw new TypeError('path must start with /, e.g. /v1/feed');
+    return this.request<T>(method.toUpperCase(), path, options.query ?? {}, options.body);
   }
 
   // ─── Plumbing ──────────────────────────────────────────────────────────────
