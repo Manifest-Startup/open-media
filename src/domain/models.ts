@@ -1,3 +1,5 @@
+import type { AppContext } from './appContext';
+
 export type MessageSource = 'open_media' | 'ai' | 'matrix' | 'gmail' | 'icloud' | 'imap' | 'instagram' | 'linkedin' | 'snapchat' | 'sms' | BridgedNetwork;
 
 /** Networks reached through Open Media's chat bridges (ADR 0011). */
@@ -124,6 +126,8 @@ export interface Conversation {
    * newest first. Replies go through one of them.
    */
   channels?: Conversation[];
+  /** Set when an integrated app such as Manifest started it (ADR 0041): shown as a "From …" chip. */
+  appContext?: AppContext;
 }
 
 export interface EmailThreadInfo {

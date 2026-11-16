@@ -41,3 +41,11 @@ test('the chip names the app and only links to its own site', () => {
   assert.equal(appChip({ app: 'manifest', url: 'https://evil.test' }), null, 'a context the server would refuse shows nothing');
   assert.equal(appContextOf(undefined), null);
 });
+
+test('posts keep an app context only when it is one the server would accept', async () => {
+  const { socialPostFromPublic } = await import('./publicPosts');
+  const record = { id: 'p1', body: 'Pitch', createdAt: '2026-11-15T12:00:00Z', author: { id: 'u1', handle: 'ana', displayName: 'Ana', avatarUrl: null } };
+  assert.deepEqual(socialPostFromPublic({ ...record, context: { app: 'manifest', idea_id: '42' } }).appContext, { app: 'manifest', idea_id: '42' });
+  assert.equal(socialPostFromPublic({ ...record, context: { app: 'manifest', url: 'https://evil.test' } }).appContext, undefined);
+  assert.equal(socialPostFromPublic(record).appContext, undefined);
+});

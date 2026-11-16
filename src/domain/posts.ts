@@ -1,3 +1,4 @@
+import type { AppContext } from './appContext';
 import { explainLensPost, FeedLens, LensContext, lensById, runLens } from './feedLenses';
 import type { PostEvent, PostListing } from './listings';
 import type { WebFeedPostInfo } from './webFeeds';
@@ -80,6 +81,8 @@ export interface SocialPost {
   webFeed?: WebFeedPostInfo;
   /** The post this one quotes, such as a Farcaster quote cast (ADR 0039). */
   quote?: QuotedPost;
+  /** Set when an integrated app such as Manifest published it (ADR 0041): shown as a "From …" chip. */
+  appContext?: AppContext;
 }
 
 /** A quoted post, shown inside the post that quotes it. */
