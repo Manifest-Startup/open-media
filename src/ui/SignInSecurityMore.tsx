@@ -1,6 +1,6 @@
 import Ionicons from './Icon';
 import { useThemedStyles } from './useThemedStyles';
-import { useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import { Image, Platform, Pressable, StyleSheet, View } from 'react-native';
 
 import {
@@ -161,6 +161,9 @@ export function SecondStepSettings({ email }: { email?: string }) {
   </>;
 }
 
+// Rows shown at a time: the list sits inside the profile's scroll view, so it is paged, not all mounted.
+const appPage = 20;
+
 /** Apps signed in with Open Media (OAuth grants), and disconnecting them. */
 export function ConnectedAppsSettings() {
   const { colors } = useOpenMediaTheme(); const styles = useThemedStyles(createStyles);
@@ -168,23 +171,33 @@ export function ConnectedAppsSettings() {
   const [available, setAvailable] = useState(true);
   const [confirm, setConfirm] = useState<string>();
   const { busy, message, error, run, retry } = useActions();
+  const [shown, setShown] = useState(appPage);
   const refresh = useCallback(async () => { const result = await listConnectedApps(); setApps(result.apps); setAvailable(result.available); }, []);
   useEffect(() => { refresh().catch(() => { setApps([]); setAvailable(false); }); }, [refresh]);
+  const disconnect = useCallback((item: ConnectedApp) => run(`revoke-${item.id}`, async () => { await disconnectApp(item.id); setConfirm(undefined); await refresh(); }, `${item.name} was disconnected.`), [run, refresh]);
   return <>
     <Text style={styles.subtitle}>Apps signed in with Open Media</Text>
     <View style={styles.card}>
       {apps === undefined ? <Loader style={styles.loading} color={colors.text} /> : !apps.length ? <View style={styles.row}><Ionicons name="lock-open-outline" size={20} color={colors.text} /><Text style={[styles.hint, styles.grow]}>{available ? 'No apps yet. When you choose “Continue with Open Media” in an app or AI assistant, it shows up here.' : 'Connected apps can’t be listed on this server.'}</Text></View>
-        : apps.map((item, index) => <View key={item.id} style={[styles.row, index > 0 && styles.divider]}>
-          {item.logoUri ? <Image source={{ uri: item.logoUri }} style={styles.logo} accessibilityIgnoresInvertColors /> : <View style={[styles.logo, styles.logoInitial]}><Text style={styles.rowTitle}>{item.name.slice(0, 1).toUpperCase()}</Text></View>}
-          <View style={styles.grow}><Text style={styles.rowTitle}>{item.name}</Text><Text style={styles.hint}>{`Connected ${new Date(item.connectedAt).toLocaleDateString()}`}</Text></View>
-          {confirm === item.id
-            ? <><Pressable accessibilityRole="button" accessibilityLabel={`Confirm disconnecting ${item.name}`} disabled={Boolean(busy)} onPress={() => run(`revoke-${item.id}`, async () => { await disconnectApp(item.id); setConfirm(undefined); await refresh(); }, `${item.name} was disconnected.`)} style={[styles.small, styles.danger]}>{busy === `revoke-${item.id}` ? <Loader color={colors.surface} /> : <Text style={styles.smallTextOn}>Disconnect</Text>}</Pressable><Pressable accessibilityRole="button" disabled={Boolean(busy)} onPress={() => setConfirm(undefined)} style={styles.small}><Text style={styles.smallText}>Keep</Text></Pressable></>
-            : <Pressable accessibilityRole="button" accessibilityLabel={`Disconnect ${item.name}`} disabled={Boolean(busy)} onPress={() => setConfirm(item.id)} style={styles.small}><Text style={styles.smallText}>Disconnect</Text></Pressable>}
-        </View>)}
+        : <>
+          {apps.slice(0, shown).map((item, index) => <ConnectedAppRow key={item.id} item={item} first={index === 0} confirming={confirm === item.id} busy={busy} onAsk={setConfirm} onDisconnect={disconnect} />)}
+          {apps.length > shown ? <Pressable accessibilityRole="button" onPress={() => setShown((count) => count + appPage)} style={[styles.row, styles.divider]}><Text style={[styles.rowTitle, styles.grow]}>{`Show ${Math.min(appPage, apps.length - shown)} more of ${apps.length - shown}`}</Text></Pressable> : null}
+        </>}
     </View>
     <Feedback message={message} error={error} retry={retry} busy={busy} />
   </>;
 }
+
+const ConnectedAppRow = memo(function ConnectedAppRow({ item, first, confirming, busy, onAsk, onDisconnect }: { item: ConnectedApp; first: boolean; confirming: boolean; busy?: string; onAsk: (id: string | undefined) => void; onDisconnect: (item: ConnectedApp) => void }) {
+  const { colors } = useOpenMediaTheme(); const styles = useThemedStyles(createStyles);
+  return <View style={[styles.row, !first && styles.divider]}>
+    {item.logoUri ? <Image source={{ uri: item.logoUri }} style={styles.logo} accessibilityIgnoresInvertColors /> : <View style={[styles.logo, styles.logoInitial]}><Text style={styles.rowTitle}>{item.name.slice(0, 1).toUpperCase()}</Text></View>}
+    <View style={styles.grow}><Text style={styles.rowTitle}>{item.name}</Text><Text style={styles.hint}>{`Connected ${new Date(item.connectedAt).toLocaleDateString()}`}</Text></View>
+    {confirming
+      ? <><Pressable accessibilityRole="button" accessibilityLabel={`Confirm disconnecting ${item.name}`} disabled={Boolean(busy)} onPress={() => onDisconnect(item)} style={[styles.small, styles.danger]}>{busy === `revoke-${item.id}` ? <Loader color={colors.surface} /> : <Text style={styles.smallTextOn}>Disconnect</Text>}</Pressable><Pressable accessibilityRole="button" disabled={Boolean(busy)} onPress={() => onAsk(undefined)} style={styles.small}><Text style={styles.smallText}>Keep</Text></Pressable></>
+      : <Pressable accessibilityRole="button" accessibilityLabel={`Disconnect ${item.name}`} disabled={Boolean(busy)} onPress={() => onAsk(item.id)} style={styles.small}><Text style={styles.smallText}>Disconnect</Text></Pressable>}
+  </View>;
+});
 
 function deviceName(): string {
   if (typeof navigator === 'undefined') return 'Passkey';
