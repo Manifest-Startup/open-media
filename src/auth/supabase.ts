@@ -5,6 +5,7 @@ import { AppState, Platform } from 'react-native';
 import { createClient, processLock, SupabaseClient, SupportedStorage } from '@supabase/supabase-js';
 
 import { createAuthRedirectURL, parseAuthCallbackURL, signInEmailsIncludeCode } from '../domain/authCallback';
+import { signInEmailError } from '../domain/signInErrors';
 
 let client: SupabaseClient | undefined;
 let nativeStorage: ChunkedSecureStorage | undefined;
@@ -53,7 +54,7 @@ export async function sendSignInLink(email: string): Promise<void> {
   const webOrigin = Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : undefined;
   const emailRedirectTo = createAuthRedirectURL(Platform.OS === 'web' ? 'web' : 'native', webOrigin);
   const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo } });
-  if (error) throw error;
+  if (error) throw signInEmailError(error);
 }
 
 export async function signOut(): Promise<void> {
