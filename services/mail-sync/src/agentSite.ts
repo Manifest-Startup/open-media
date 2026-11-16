@@ -353,9 +353,18 @@ import { OpenMedia } from 'open-media-sdk';
 const feed = await new OpenMedia().feed({ sources: ['farcaster', 'lens'] });
 \`\`\`
 
+The command line covers the whole platform: every tool on the MCP servers is a command, with flags generated from its input schema and read live from \`tools/list\`, so new tools appear without an update.
+
 \`\`\`bash
-open-media search ethereum on lens --json
+open-media login              # in the browser
+open-media tools --search post
+open-media get-feed --sources lens
+open-media publish-post "Hi" --yes
+open-media api GET /v1/me/follows
+source <(open-media completion zsh)
 \`\`\`
+
+\`open-media login\` registers the CLI as the public OAuth client “Open Media CLI” and listens on a random \`127.0.0.1\` port for the redirect, so it shows in Sign-in and security → Connected apps and \`open-media logout\` revokes it. On a machine without a browser, \`open-media login you@example.com\` signs in with an emailed code. Every tool that changes something asks first (or takes \`--yes\`); \`--json\` prints JSON; exit codes are 0 done, 1 the API refused, 2 the command was wrong.
 
 ## Access tokens
 
@@ -589,7 +598,7 @@ Content-Type: application/json
 {"email": "person@example.com", "code": "12345678"}
 \`\`\`
 
-The response holds \`access_token\` (send it as \`Authorization: Bearer …\`; it lasts \`expires_in\` seconds, an hour), \`refresh_token\` and \`user\`. Renew with \`POST ${origin}/v1/auth/refresh\` and \`{"refresh_token": "…"}\`; end the session with \`POST ${origin}/v1/auth/sign-out\`. A new account has no profile yet (\`GET /v1/me\` answers \`no_profile\`): ask the person for a name and handle and send them to \`PUT ${origin}/v1/me/profile\` as \`{"displayName": "…", "handle": "…"}\`. The same steps are MCP tools on \`${origin}/open/mcp\` (\`request_sign_in_code\`, \`sign_in_with_code\`, \`refresh_sign_in\`) and \`set_up_profile\` on \`/me/mcp\`; the CLI does it with \`open-media login you@example.com\`. Keep both tokens private, as you would a password. Errors: \`invalid_code\` (400, ask for a new code), \`rate_limited\` (429 with \`Retry-After\`).
+The response holds \`access_token\` (send it as \`Authorization: Bearer …\`; it lasts \`expires_in\` seconds, an hour), \`refresh_token\` and \`user\`. Renew with \`POST ${origin}/v1/auth/refresh\` and \`{"refresh_token": "…"}\`; end the session with \`POST ${origin}/v1/auth/sign-out\`. A new account has no profile yet (\`GET /v1/me\` answers \`no_profile\`): ask the person for a name and handle and send them to \`PUT ${origin}/v1/me/profile\` as \`{"displayName": "…", "handle": "…"}\`. The same steps are MCP tools on \`${origin}/open/mcp\` (\`request_sign_in_code\`, \`sign_in_with_code\`, \`refresh_sign_in\`) and \`set_up_profile\` on \`/me/mcp\`; the CLI does it with \`open-media login you@example.com\` (plain \`open-media login\` signs in through the browser instead). Keep both tokens private, as you would a password. Errors: \`invalid_code\` (400, ask for a new code), \`rate_limited\` (429 with \`Retry-After\`).
 
 ## Register an agent identity
 

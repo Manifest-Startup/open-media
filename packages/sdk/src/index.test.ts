@@ -79,3 +79,14 @@ test('webhook signatures are checked over timestamp.body, within five minutes', 
   assert.equal(await verifyWebhook('s'.repeat(32), headers(1_800_000_000, 'w'.repeat(32)), body, { now: 1_800_000_000_000 }), false, 'wrong secret');
   assert.equal(await verifyWebhook('s'.repeat(32), headers(1_800_000_000), `${body} `, { now: 1_800_000_000_000 }), false, 'changed body');
 });
+
+test('api() reaches any route, with the connected rewrite, query and an idempotent write', async () => {
+  const net = fake([Response.json({ ok: 1 }), Response.json({ ok: 2 })]);
+  const om = new OpenMedia({ baseUrl: 'https://api.test', token: 'oauth', connected: true, fetch: net.impl });
+  assert.deepEqual(await om.api('get', '/v1/me/follows', { query: { limit: 5 } }), { ok: 1 });
+  assert.equal(net.calls[0].url, 'https://api.test/v1/connected/me/follows?limit=5');
+  await om.api('POST', '/v1/me/posts', { body: { text: 'hi' } });
+  assert.equal(net.calls[1].init.method, 'POST');
+  assert.ok((net.calls[1].init.headers as Record<string, string>)['idempotency-key']);
+  assert.throws(() => om.api('GET', 'v1/feed'), TypeError);
+});
