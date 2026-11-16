@@ -2,6 +2,7 @@ import { PostPaid, SocialPost } from './posts';
 import { isStoredPostVideo, postVideoPublicUrl, StoredPostVideo } from './postVideo';
 import { isListing, PostListing } from './listings';
 import { engagementFromRecord } from './postInteractions';
+import { appContextOf } from './appContext';
 
 /** Shape returned by the open_media_public_* database functions and the public API. */
 export interface PublicPostRecord {
@@ -17,6 +18,8 @@ export interface PublicPostRecord {
   paid?: { priceMinor: number; currency: string; unlocked: boolean; body?: string | null } | null;
   /** Comment, reshare, and like counts, with the viewer's own like and reshare. */
   engagement?: { replies: number; reposts: number; likes: number; liked?: boolean; reshared?: boolean } | null;
+  /** Set by an integrated app (ADR 0041). Only contexts the app would accept are kept. */
+  context?: unknown;
 }
 
 function paidFrom(record: PublicPostRecord['paid']): PostPaid | undefined {
@@ -42,6 +45,7 @@ export const maxPostLength = 2000;
  */
 export function socialPostFromPublic(record: PublicPostRecord, supabaseUrl?: string): SocialPost {
   const video = supabaseUrl && isStoredPostVideo(record.video) ? record.video : undefined;
+  const appContext = appContextOf(record.context);
   return {
     id: record.id,
     author: {
@@ -69,6 +73,7 @@ export function socialPostFromPublic(record: PublicPostRecord, supabaseUrl?: str
     } : {}),
     ...(isListing(record.listing) ? { listing: record.listing } : {}),
     ...(paidFrom(record.paid) ? { paid: paidFrom(record.paid) } : {}),
+    ...(appContext ? { appContext } : {}),
     engagement: engagementFromRecord(record.engagement),
     topics: record.listing ? [record.listing.kind === 'product' ? 'products' : record.listing.kind === 'event' ? 'events' : 'services'] : [],
     provenance: { connectorId: 'open-media', externalId: record.id },

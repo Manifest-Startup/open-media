@@ -55,3 +55,24 @@ test('the sign-in pages refuse forged posts and expired or missing challenges', 
   assert.equal((await post('/authorize/account/complete', `challenge=${id}&code=123456&approve=yes`, { cookie: `om_account_oauth=${id}` }))!.status, 400, 'an unknown challenge has expired');
   assert.equal(await handleAccountAuthorization(new Request('https://api.openmedia.site/somewhere-else', { method: 'POST' }), env), undefined);
 });
+
+test('a web app identified by a Client ID Metadata Document gets the account sign-in (Manifest, ADR 0041)', async () => {
+  const kv = new Map<string, string>();
+  const clientId = 'https://manifeststartup.com/oauth/open-media-client.json';
+  const redirectUri = 'https://manifeststartup.com/api/integrations/open-media/callback';
+  const looked: string[] = [];
+  // The provider resolves the document (its own CIMD support) and checks the redirect URI against it.
+  const provider = {
+    parseAuthRequest: async () => ({ responseType: 'code', clientId, redirectUri, scope: ['account'], state: 's', codeChallenge: 'c', codeChallengeMethod: 'S256' }),
+    lookupClient: async (id: string) => { looked.push(id); return { clientId: id, clientName: 'Manifest', redirectUris: [redirectUri], tokenEndpointAuthMethod: 'none' }; },
+  };
+  const env = { ...signIn, OAUTH_KV: { get: async (key: string) => kv.get(key) ?? null, put: async (key: string, value: string) => { kv.set(key, value); }, delete: async (key: string) => { kv.delete(key); } } as unknown as KVNamespace, OAUTH_PROVIDER: provider as never };
+  const response = (await handleAccountAuthorization(new Request(`https://api.openmedia.site/authorize?client_id=${encodeURIComponent(clientId)}&scope=account`), env))!;
+  assert.equal(response.status, 200);
+  assert.deepEqual(looked, [clientId]);
+  const page = await response.text();
+  assert.ok(page.includes('Connect Manifest'), 'the person sees which app is asking');
+  const [challenge] = [...kv.values()].map((value) => JSON.parse(value) as { oauthRequest: { scope: string[]; redirectUri: string }; redirectHost: string });
+  assert.deepEqual(challenge.oauthRequest.scope, ['account'], 'the grant is for the account, nothing else');
+  assert.equal(challenge.redirectHost, 'manifeststartup.com');
+});

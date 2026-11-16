@@ -9,9 +9,9 @@ const post = {
   id: postId,
   body: 'Hello, open web',
   createdAt: '2026-09-27T10:00:00+00:00',
-  author: { id: 'internal-user-id', handle: 'maya', displayName: 'Maya', avatarUrl: null },
+  author: { id: '10000000-0000-0000-0000-000000000009', handle: 'maya', displayName: 'Maya', avatarUrl: null },
 };
-const profile = { id: 'internal-user-id', handle: 'maya', displayName: 'Maya', bio: 'Hi', avatarUrl: null, joinedAt: '2026-09-01T00:00:00+00:00', postCount: 1 };
+const profile = { id: '10000000-0000-0000-0000-000000000009', handle: 'maya', displayName: 'Maya', bio: 'Hi', avatarUrl: null, joinedAt: '2026-09-01T00:00:00+00:00', postCount: 1 };
 
 function fakeUpstream(results: Record<string, unknown>, calls: Array<{ url: string; body: Record<string, unknown>; apikey?: string }> = []) {
   return async (url: string, init?: RequestInit) => {
@@ -25,7 +25,7 @@ function fakeUpstream(results: Record<string, unknown>, calls: Array<{ url: stri
 
 const get = (path: string, init?: RequestInit) => new Request(`https://api.openmedia.test${path}`, init);
 
-test('lists public posts with a stable, email-free schema', async () => {
+test('lists public posts with a stable, email-free schema, plus the app-integration fields (ADR 0041)', async () => {
   const calls: Array<{ url: string; body: Record<string, unknown>; apikey?: string }> = [];
   const response = await handlePublicApiRequest(get('/v1/posts'), env, fakeUpstream({ open_media_public_posts: [post] }, calls));
   assert.equal(response.status, 200);
@@ -35,11 +35,17 @@ test('lists public posts with a stable, email-free schema', async () => {
     id: postId,
     type: 'post',
     text: 'Hello, open web',
+    body: 'Hello, open web',
     createdAt: '2026-09-27T10:00:00+00:00',
+    created_at: '2026-09-27T10:00:00+00:00',
     url: `https://api.openmedia.test/v1/posts/${postId}`,
     video: null,
-    author: { handle: 'maya', displayName: 'Maya', avatarUrl: null, verified: false, url: 'https://api.openmedia.test/v1/profiles/maya' },
+    // The author id is the same public id that already names their video files.
+    author: { id: '10000000-0000-0000-0000-000000000009', handle: 'maya', displayName: 'Maya', display_name: 'Maya', avatarUrl: null, avatar_url: null, verified: false, url: 'https://api.openmedia.test/v1/profiles/maya' },
+    context: null,
+    counts: { likes: 0, comments: 0, reshares: 0 },
   });
+  assert.ok(!JSON.stringify(json).includes('@'), 'no email address anywhere');
   assert.equal(json.pagination.nextCursor, null);
   assert.equal(calls[0].url, 'https://db.example.test/rest/v1/rpc/open_media_public_posts');
   assert.equal(calls[0].apikey, 'publishable-key');
@@ -72,6 +78,8 @@ test('returns a post video as public file URLs and filters to video posts', asyn
   assert.deepEqual(json.data[0].video, {
     url: `https://db.example.test/storage/v1/object/public/post-videos/${authorId}/${postId}.mp4`,
     posterUrl: `https://db.example.test/storage/v1/object/public/post-videos/${authorId}/${postId}.jpg`,
+    poster_url: `https://db.example.test/storage/v1/object/public/post-videos/${authorId}/${postId}.jpg`,
+    duration_ms: 12500,
     streaming: 'progressive',
     contentType: 'video/mp4',
     durationSeconds: 12.5,
@@ -81,6 +89,18 @@ test('returns a post video as public file URLs and filters to video posts', asyn
   });
   assert.match(json.pagination.next, /media=video/);
   assert.equal((await handlePublicApiRequest(get('/v1/posts?media=audio'), env, fakeUpstream({ open_media_public_posts: [] }))).status, 400);
+});
+
+test('?app= lists one integrated app’s posts with their context and counts', async () => {
+  const appPost = { ...post, context: { app: 'manifest', idea_id: '42', url: 'https://manifeststartup.com/ideas/42' }, engagement: { replies: 2, reposts: 1, likes: 5, liked: false, reshared: false } };
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const response = await handlePublicApiRequest(get('/v1/posts?media=video&app=manifest&limit=1'), env, fakeUpstream({ open_media_public_posts: [appPost] }, calls));
+  const json = await response.json() as { data: Array<Record<string, unknown>>; pagination: { next: string } };
+  assert.equal(calls[0].body.p_app, 'manifest');
+  assert.deepEqual(json.data[0].context, appPost.context);
+  assert.deepEqual(json.data[0].counts, { likes: 5, comments: 2, reshares: 1 });
+  assert.match(json.pagination.next, /app=manifest/);
+  assert.equal((await handlePublicApiRequest(get('/v1/posts?app=elsewhere'), env, fakeUpstream({ open_media_public_posts: [] }))).status, 400);
 });
 
 test('rejects invalid limits and cursors', async () => {
@@ -143,4 +163,14 @@ test('routes only public paths to the public API', async () => {
   for (const path of ['/health', '/v1/mail-accounts', '/v1/mail-accounts/1/sync', '/v1/postsX', '/v2/posts']) {
     assert.equal(isPublicApiPath(path), false, path);
   }
+});
+
+test('lists a post’s public comments for signed-out readers, such as Manifest’s clip viewers', async () => {
+  const comment = { id: '1f8fad5b-d9cb-469f-a165-70867728950e', postId, body: 'Great pitch', createdAt: '2026-11-15T10:00:00+00:00', author: { id: profile.id, handle: 'maya', displayName: 'Maya', avatarUrl: null } };
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const response = await handlePublicApiRequest(get(`/v1/posts/${postId}/comments?limit=500`), env, fakeUpstream({ open_media_post_comments: [comment] }, calls));
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json() as { data: unknown[] }).data, [comment]);
+  assert.deepEqual(calls[0].body, { p_post_id: postId, p_limit: 200 });
+  assert.equal((await handlePublicApiRequest(get('/v1/posts/not-a-uuid/comments'), env, fakeUpstream({}))).status, 404);
 });

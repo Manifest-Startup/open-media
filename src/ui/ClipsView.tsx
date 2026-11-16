@@ -14,6 +14,7 @@ import { TranslationNote, useTranslation } from './useTranslation';
 import { VerifiedTickWithCard, personVerification } from './VerifiedSeal';
 import { Loader } from './Loader';
 import { usePageActive } from './stack';
+import { appChip } from '../domain/appContext';
 
 /**
  * Clips: the same canonical posts as Feed, shown as an immersive vertical stream of short videos
@@ -124,6 +125,8 @@ const Clip = memo(function Clip({ post, lens, lensContext, height, active, mount
   const translation = useTranslation(post.id, [post.title ?? post.body]);
   const explanation = useMemo(() => why ? explainFeedPost(post, lens, lensContext) : undefined, [why, post, lens, lensContext]);
   const fail = useCallback(() => onFailed(post.id), [onFailed, post.id]);
+  // "From Manifest" on clips an integrated app published (ADR 0041).
+  const chip = post.appContext ? appChip(post.appContext) : null;
   if (!media?.url) return null;
   return <View style={[styles.clip, { height }]}>
     {mounted
@@ -139,6 +142,7 @@ const Clip = memo(function Clip({ post, lens, lensContext, height, active, mount
       <TranslationNote note={translation.note} style={styles.translationNote} />
       <View style={styles.meta}>
         <Text style={styles.source}>{network}{media.durationSeconds ? ` · ${Math.round(media.durationSeconds)}s` : ''}</Text>
+        {chip ? chip.url ? <Pressable accessibilityRole="link" accessibilityLabel={chip.accessibilityLabel} onPress={() => { Linking.openURL(chip.url!).catch(() => undefined); }} style={styles.link}><Text style={styles.linkText}>{chip.label}</Text><Ionicons name="open-outline" size={12} color="#E8E8E3" /></Pressable> : <Text style={styles.source}>{chip.label}</Text> : null}
         {original ? <Pressable accessibilityRole="link" accessibilityLabel={`Open this clip on ${network}`} onPress={() => { Linking.openURL(original).catch(() => undefined); }} style={styles.link}><Text style={styles.linkText}>Open on {network}</Text><Ionicons name="open-outline" size={12} color="#E8E8E3" /></Pressable> : null}
         <Pressable accessibilityRole="button" accessibilityState={{ expanded: why }} onPress={() => setWhy((value) => !value)} style={styles.link}><Text style={styles.linkText}>Why this?</Text></Pressable>
       </View>

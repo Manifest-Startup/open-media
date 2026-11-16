@@ -13,8 +13,10 @@ import { AuthEmailEnv, handleSendEmailHook } from './authEmail.js';
 import { withSecurityHeaders } from './securityHeaders.js';
 import { PublicApiEnv, withinLimit } from './publicApi.js';
 import { MarketplaceEnv, runMarketplaceJobs } from './marketplace.js';
+import { connectedNotFound, connectedPrefix, connectedRequest, connectedResponse } from './appIntegrations.js';
+import { AppWebhookEnv, runAppWebhooks } from './appWebhooks.js';
 
-type WorkerEnv = Env & MailEnv & EventsEnv & OndcEnv & WebAppEnv & AuthEmailEnv & PublicApiEnv & MarketplaceEnv;
+type WorkerEnv = Env & MailEnv & EventsEnv & OndcEnv & WebAppEnv & AuthEmailEnv & PublicApiEnv & MarketplaceEnv & AppWebhookEnv;
 
 /** Every minute: listing checks, statements of reasons and seller confirmations (ADR 0016). */
 const marketplaceCron = '* * * * *';
@@ -35,8 +37,15 @@ const defaultHandler = {
 const eventsApiHandler = {
   async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
     const props = (ctx as ExecutionContext & { props?: unknown }).props;
+    const pathname = new URL(request.url).pathname;
+    // REST for apps over "Sign in with Open Media" (ADR 0041): /v1/connected/me/… is /v1/me/…, as the person.
+    if (pathname === connectedPrefix || pathname.startsWith(`${connectedPrefix}/`)) {
+      if (!isAccountGrant(props)) return Response.json({ error: 'insufficient_scope', error_description: 'This connection is for Open Media Events. Connect your Open Media account (scope "account") to use /v1/connected.' }, { status: 403 });
+      const forwarded = connectedRequest(request, props);
+      return forwarded ? connectedResponse(await handleMailRequest(forwarded, env)) : connectedNotFound();
+    }
     // The person's account over OAuth: the same account server as /me/mcp, as them.
-    if (new URL(request.url).pathname.replace(/\/+$/, '') === accountMcpPath) {
+    if (pathname.replace(/\/+$/, '') === accountMcpPath) {
       if (!isAccountGrant(props)) return Response.json({ error: 'insufficient_scope', error_description: 'This connection is for Open Media Events. Connect your Open Media account to use it here.' }, { status: 403 });
       return handleMailRequest(accountMcpRequest(request, props), env);
     }
@@ -50,7 +59,7 @@ const eventsApiHandler = {
 let signInEnv: WorkerEnv | undefined;
 
 const oauth = new OAuthProvider<WorkerEnv>({
-  apiRoute: ['/mcp', '/v1/events/tools/', accountMcpPath],
+  apiRoute: ['/mcp', '/v1/events/tools/', accountMcpPath, `${connectedPrefix}/`],
   apiHandler: eventsApiHandler as never,
   defaultHandler: defaultHandler as never,
   authorizeEndpoint: '/authorize',
@@ -132,6 +141,10 @@ export default {
       ctx.waitUntil(runMarketplaceJobs(env).then((done) => {
         if (done.checked || done.notices || done.confirmed || done.sellers) console.log(JSON.stringify({ event: 'marketplace_jobs', ...done }));
       }).catch((error) => console.error(JSON.stringify({ event: 'marketplace_jobs_failed', message: error instanceof Error ? error.message : 'unknown' }))));
+      // Webhooks to integrated apps (ADR 0041), from the outbox the database triggers fill.
+      ctx.waitUntil(runAppWebhooks(env).then((done) => {
+        if (done.delivered || done.failed) console.log(JSON.stringify({ event: 'app_webhooks', ...done }));
+      }).catch((error) => console.error(JSON.stringify({ event: 'app_webhooks_failed', message: error instanceof Error ? error.message : 'unknown' }))));
       return;
     }
     ctx.waitUntil(runScheduledRefresh(env));

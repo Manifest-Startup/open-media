@@ -6,6 +6,7 @@ import {
 
 import { Conversation, Message, MessageReaction, Person } from "../domain/models";
 import { applyReceipts, unreadCount } from "../domain/receipts";
+import { appContextOf } from "../domain/appContext";
 import { isEmptyProfessional, parseProfessional, ProfessionalProfile, toJsonResume } from "../domain/professionalProfile";
 import { ProfileFieldValue, validateProfileFields } from "../domain/profileFields";
 import { getSupabaseClient } from "../auth/supabase";
@@ -42,6 +43,8 @@ interface ConversationRow {
   title: string | null;
   created_at: string;
   updated_at: string;
+  /** An integrated app's context (ADR 0041); servers before 20261124120000 have no such column. */
+  context?: unknown;
 }
 interface MembershipRow {
   conversation_id: string;
@@ -230,11 +233,7 @@ export async function loadOpenMediaConversations(
   // Everything below depends only on the conversation ids, so it is asked for in one round trip
   // instead of one request after another (this list reloads on every new message and reaction).
   const [conversationResult, membersResult, messagesResult, receiptResult, reactionResult, markedResult] = await Promise.all([
-    client
-      .from("conversations")
-      .select("id, kind, title, created_at, updated_at")
-      .in("id", conversationIds)
-      .order("updated_at", { ascending: false }),
+    loadConversationRows(client, conversationIds),
     client
       .from("conversation_members")
       .select("conversation_id, user_id")
@@ -296,7 +295,7 @@ export async function loadOpenMediaConversations(
     messagesByConversation.set(row.conversation_id, list);
   }
 
-  return ((conversationResult.data ?? []) as ConversationRow[])
+  return ((conversationResult.data ?? []) as unknown as ConversationRow[])
     .map((conversation) => {
       const participantRows = othersByConversation.get(conversation.id) ?? [];
       const participants = participantRows
@@ -309,6 +308,7 @@ export async function loadOpenMediaConversations(
       const conversationMessages = applyReceipts((messagesByConversation.get(conversation.id) ?? [])
         .map((message) => withReactions(mapMessage(message, currentUserId, participantRows), reactionsByMessage.get(message.id))), others);
       const lastMessage = conversationMessages[conversationMessages.length - 1];
+      const appContext = appContextOf(conversation.context);
       return {
         id: conversation.id,
         groupTitle:
@@ -322,6 +322,7 @@ export async function loadOpenMediaConversations(
         preview: lastMessage?.body ?? "Start the conversation.",
         unreadCount: Math.max(markedUnread.has(conversation.id) ? 1 : 0, unreadCount(conversationMessages, own?.read_at ?? undefined)),
         labels: conversation.kind === "group" ? ["Group"] : [],
+        ...(appContext ? { appContext } : {}),
       } satisfies Conversation;
     })
     .sort(
@@ -329,6 +330,13 @@ export async function loadOpenMediaConversations(
         new Date(right.lastMessageAt).getTime() -
         new Date(left.lastMessageAt).getTime(),
     );
+}
+
+/** The conversations, with their app context where the server has it (an older server answers 42703). */
+async function loadConversationRows(client: ReturnType<typeof requireClient>, ids: string[]) {
+  const query = (columns: string) => client.from("conversations").select(columns).in("id", ids).order("updated_at", { ascending: false });
+  const result = await query("id, kind, title, created_at, updated_at, context");
+  return result.error?.code === "42703" ? query("id, kind, title, created_at, updated_at") : result;
 }
 
 interface ReactionRow { message_id: string; user_id: string; emoji: string; created_at: string }

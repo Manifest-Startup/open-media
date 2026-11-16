@@ -28,6 +28,21 @@ await me.publish('Hello from my agent', { idempotencyKey: crypto.randomUUID() })
 
 Writes send an `Idempotency-Key` automatically; pass your own to make retries safe across processes. A 429 is retried after `Retry-After` seconds. Errors are `OpenMediaError` with `status`, `code` and `message`.
 
+## Apps that sign people in with Open Media
+
+A web app that signed someone in with "Sign in with Open Media" (OAuth, scope `account`) passes that token with `connected: true`, so account calls go to `/v1/connected/me/…` (ADR 0041):
+
+```ts
+const om = new OpenMedia({ token: oauthAccessToken, connected: true });
+const { conversation } = await om.startConversation('founder', { app: 'manifest', idea_id: '42', url: 'https://manifeststartup.com/ideas/42' });
+await om.sendMessage(conversation!.id, 'Hi!', { clientId: crypto.randomUUID() });
+const video = await om.uploadVideo(bytes, 'video/mp4');
+await om.publish('Our pitch', { video, context: { app: 'manifest', idea_id: '42' } });
+const clips = await om.appPosts('manifest', { kind: 'clips' });
+```
+
+`verifyWebhook(secret, request.headers, rawBody)` checks the signed webhooks Open Media sends to integrated apps.
+
 Payments (`startPayment`) never move money by themselves: card payments return a Stripe page for the person to open, and USDC payments return a transfer for their own wallet. Always show the person the recipient, amount and fees first.
 
 ## Links

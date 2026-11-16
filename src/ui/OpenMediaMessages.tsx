@@ -35,6 +35,7 @@ import { jumboEmojiCount, mediaPreview, parseMessageMedia } from "../domain/mess
 import { lazyComponent, whenIdle } from "./lazyComponent";
 import { JumboEmoji, MessageMediaView } from "./MessageMediaView";
 import { lightHaptic, mediumHaptic, selectionHaptic } from "./haptics";
+import { AppContextChip } from "./AppContextChip";
 
 interface Props {
   conversations: Conversation[];
@@ -486,6 +487,7 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, on
           <Text numberOfLines={2} style={[styles.preview, styles.previewShrink, conversation.unreadCount > 0 && styles.previewUnread]}>
             {listPreview(conversation.preview)}
           </Text>
+          {appContextOfConversation(conversation) ? <AppContextChip context={appContextOfConversation(conversation)} linked={false} /> : null}
           {conversation.unreadCount > 0 ? (
             <View style={styles.unreadBadge}>
               <Text style={styles.unreadBadgeText}>{conversation.unreadCount > 99 ? "99+" : conversation.unreadCount}</Text>
@@ -978,6 +980,7 @@ conversation.messages.length || waiting.length ? (
           ) : null}
         </View>
       </View>
+      {appContextOfConversation(conversation) ? <View style={styles.threadContext}><AppContextChip context={appContextOfConversation(conversation)} /></View> : null}
       <View style={styles.threadBody} {...swipePan.panHandlers}>
       <ScrollView
         ref={threadScroll}
@@ -1625,6 +1628,11 @@ function folded(value: string): string {
 }
 
 /** Where a channel of a merged conversation goes: an email address, or the network's name. */
+/** The app a conversation is about (ADR 0041), also when it is one channel of a merged conversation. */
+function appContextOfConversation(conversation: Conversation) {
+  return conversation.appContext ?? conversation.channels?.find((channel) => channel.appContext)?.appContext;
+}
+
 function channelSource(channel: Conversation) {
   return channel.messages[channel.messages.length - 1]?.source ?? channel.sourceSummary[0];
 }
@@ -2496,6 +2504,7 @@ function createStyles(colors: ThemeColors) {
     trayTime: { marginHorizontal: 4, color: colors.textTertiary, fontSize: 11, fontWeight: "500", fontVariant: ["tabular-nums"], whiteSpace: "nowrap" } as object,
     // The thread's rows, and the times a phone's swipe reveals at the right edge.
     threadBody: { flex: 1 },
+    threadContext: { paddingHorizontal: 16, paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
     swipeRow: { width: "100%" },
     rowRaised: { zIndex: 20 },
     // While the tapback bar is open, the rest of the thread fades back, as in iMessage.

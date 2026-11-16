@@ -48,6 +48,14 @@ VERIFICATION_RETURN_URL         where Stripe sends people afterwards, e.g. the a
 
 Subscribe the webhook to `identity.verification_session.verified`, `.requires_input`, `.canceled` and `.redacted`. Until all are set, the app says verification is "Not available yet" and nobody has a blue tick. Legal names are encrypted with `IDENTITY_KEY`, or a key derived from `MAIL_CREDENTIALS_KEY`.
 
+Optional, for webhooks to integrated apps (ADR 0041). Needs `SUPABASE_SECRET_KEY` too:
+
+```text
+APP_WEBHOOKS   JSON: {"manifest":{"url":"https://manifeststartup.com/api/webhooks/open-media","secret":"<at least 16 random characters, e.g. 64 hex>"}}
+```
+
+The per-minute cron sends each queued event as `POST <url>` with `X-Open-Media-Event`, `X-Open-Media-Delivery` (also the body's `id`, for deduplication), `X-Open-Media-Timestamp` (unix seconds) and `X-Open-Media-Signature: sha256=<hex HMAC-SHA256(secret, timestamp + "." + raw body)>`. The secret's UTF-8 bytes are the key. Bodies hold IDs, recipients and the app context, never message text. Failures are retried with backoff for 24 hours. Unknown apps, non-https URLs (except `http://localhost` for local development) and short secrets are ignored. Set it with `npx wrangler secret put APP_WEBHOOKS`.
+
 `MAIL_CREDENTIALS_KEY` must be a base64-encoded 32-byte key and must never be placed in Expo configuration. Generate Worker types and validate the bundle with `npm run worker:types` and `npm run worker:check`. Deploy with `npm run worker:deploy`, after applying the repository's Supabase migrations to production.
 
 The production health endpoint is `https://api.openmedia.site/health`.

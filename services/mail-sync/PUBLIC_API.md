@@ -23,7 +23,7 @@ Marketplace trust ([ADR 0016](../../docs/adrs/0016-marketplace-trust-and-communi
 | --- | --- | --- |
 | GET | `/` or `/v1` | Machine-readable description of the API |
 | GET | `/v1/openapi.json` | OpenAPI 3.1 document |
-| GET | `/v1/posts?limit=&cursor=&media=` | Public posts, newest first; `media=video` lists only video posts |
+| GET | `/v1/posts?limit=&cursor=&media=&app=` | Public posts, newest first; `media=video` lists only video posts, `app=manifest` only posts an integrated app published (ADR 0041). Each post also has `context`, `counts` and snake_case `body`, `created_at`, author and video fields |
 | GET | `/v1/posts/{id}` | One public post |
 | GET | `/v1/profiles/{handle}` | One public profile (a private account returns only its handle, shown name, photo and tick), including the open-network accounts its owner chose to list (`linkedAccounts`; declared by them, not proven) |
 | GET | `/v1/profiles/{handle}/posts?limit=&cursor=` | A profile's public posts, newest first |
