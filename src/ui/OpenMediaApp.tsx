@@ -46,6 +46,7 @@ import { ThemeColors } from "../theme";
 import { useOpenMediaTheme } from "../themeContext";
 import { AskMark } from "./AiMark";
 import type { SettingFocus } from "./SettingAnchor";
+import { securitySettingsPath } from "../domain/signInGateway";
 import { settingForSection } from "../domain/settings";
 import { FeedView } from "./OpenMediaFeed";
 import { lazyComponent, whenIdle } from "./lazyComponent";
@@ -622,6 +623,14 @@ export function OpenMediaApp({
     else if (entry?.page === "search") { setSearchQuery("read receipts"); navigate("search"); }
     else { navigate("settings"); setSettingsFocus(focus); }
   };
+
+  // openmedia.site/settings/security (linked from apps such as Manifest) opens Sign-in and security.
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined" || window.location.pathname.replace(/\/$/, "") !== securitySettingsPath) return;
+    window.history.replaceState(null, "", "/");
+    openSetting("password");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!aiActions.length) return;

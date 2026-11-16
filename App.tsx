@@ -7,6 +7,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Platform } from 'react-native';
 
 import { passkeyBridgePath } from './src/domain/passkeyBridge';
+import { gatewayPath } from './src/domain/signInGateway';
 import { AppErrorBoundary } from './src/ui/AppErrorBoundary';
 import { GestureRoot } from './src/ui/edgeSwipe';
 import { lazyComponent } from './src/ui/lazyComponent';
@@ -17,13 +18,16 @@ import { registerWebMcpTools } from './src/web/webMcp';
 // openmedia.site/passkey is the page the phone app opens to use a passkey (ADR 0034).
 const PasskeyBridge = lazyComponent(() => import('./src/ui/PasskeyBridge').then((module) => module.PasskeyBridge));
 const passkeyBridgePage = Platform.OS === 'web' && typeof window !== 'undefined' && window.location.pathname === passkeyBridgePath;
+// openmedia.site/signin is the one sign-in for the web app and every app that signs in with Open Media (ADR 0042).
+const SignInGateway = lazyComponent(() => import('./src/ui/SignInGateway').then((module) => module.SignInGateway));
+const signInGatewayPage = Platform.OS === 'web' && typeof window !== 'undefined' && window.location.pathname.replace(/\/$/, '') === gatewayPath;
 
 // Keep the launch screen up until the fonts are ready, so text never flashes in a fallback font.
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
 function ThemedApp() {
   const { colors, isDark } = useOpenMediaTheme();
-  return <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={['top', 'bottom']}><StatusBar style={isDark ? 'light' : 'dark'} />{passkeyBridgePage ? <PasskeyBridge /> : <OpenMediaEntry />}</SafeAreaView>;
+  return <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={['top', 'bottom']}><StatusBar style={isDark ? 'light' : 'dark'} />{passkeyBridgePage ? <PasskeyBridge /> : signInGatewayPage ? <SignInGateway /> : <OpenMediaEntry />}</SafeAreaView>;
 }
 
 export default function App() {

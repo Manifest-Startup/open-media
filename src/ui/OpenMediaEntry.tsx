@@ -5,11 +5,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Image, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Text, TextInput } from './Text';
 
-import { completePasskeyStep, confirmSignUp, forgetPendingPasswordReset, passwordResetWaitingForPasskey, passkeyStepNeeded, passkeysSupportedHere, resetPasswordWithCode, sendPasswordResetCode, signInWithPassword, signUpWithPassword } from '../auth/accountSecurity';
+import { authenticatorStepFactor, completeAuthenticatorStep, completePasskeyStep, confirmSignUp, forgetPendingPasswordReset, passwordResetWaitingForPasskey, passkeyStepNeeded, passkeysSupportedHere, resetPasswordWithCode, sendPasswordResetCode, signInWithPassword, signUpWithPassword } from '../auth/accountSecurity';
 import { passwordProblem } from '../domain/passwordRules';
 import { completeHandedOffSignIn, completeSignInURL, getSupabaseClient, localAutoSignInAvailable, sendSignInLink, signInEmailHasCode, SignInHandedOff, signOut, verifySignInCode, waitForLocalSignIn } from '../auth/supabase';
 import { getCurrentProfile, OpenMediaProfile, saveCurrentProfile } from '../data/openMediaService';
 import { profileHandleFromPath } from '../domain/profileFields';
+import { gatewayPath, securitySettingsPath } from '../domain/signInGateway';
 import { ThemeColors } from '../theme';
 import { useOpenMediaTheme } from '../themeContext';
 import { BrandMark } from './BrandMark';
@@ -119,7 +120,11 @@ export function OpenMediaEntry() {
   if (loading) return <CenteredStatus label="Opening Open Media…" />;
   if (loadFailed) return <RetryStatus error={error} onRetry={() => setRetryVersion((value) => value + 1)} onSignOut={session ? async () => { await signOut(); setSession(undefined); setLoadFailed(false); } : undefined} />;
   if (handedOff && !session) return <HandedOff />;
-  if (!session && !signingIn) return <PublicSite onSignIn={() => { setError(''); setSigningIn(true); }} />;
+  // On the web, signing in (and a pending second step) happens on the sign-in gateway, openmedia.site/signin (ADR 0042).
+  // Signed out at /settings/security: sign in first, then come back to it.
+  if (Platform.OS === 'web' && !session && window.location.pathname.replace(/\/$/, '') === securitySettingsPath) return <ToSignInGateway />;
+  if (!session && !signingIn) return <PublicSite onSignIn={() => { setError(''); if (Platform.OS === 'web') openSignInGateway(); else setSigningIn(true); }} />;
+  if (Platform.OS === 'web' && (!session || passkeyNeeded)) return <ToSignInGateway />;
   if (session && passkeyNeeded) return <PasskeyStep onSignOut={async () => { forgetPendingPasswordReset(); await signOut(); passkeyPending.current = false; setPasskeyNeeded(false); setSession(undefined); }} />;
   if (!session) return <SignInScreen error={error} onError={setError} onBack={() => setSigningIn(false)} onMatrixDemo={matrixAvailable ? () => setMatrixDemo(true) : undefined} />;
   if (!profile) return <ProfileSetup session={session} error={error} onError={setError} onComplete={(nextProfile) => { loadedUserId.current = session.user.id; setProfile(nextProfile); }} onSignOut={async () => { await signOut(); setSession(undefined); }} />;
@@ -405,21 +410,28 @@ function PasswordSignIn({ error, onError, onBack, onMatrixDemo, email, onEmail, 
     <Pressable accessibilityRole="button" onPress={() => { onError(''); onBack(); }} style={styles.secondary}><Text style={styles.secondaryText}>Keep browsing without an account</Text></Pressable><Text style={styles.privacy}>Posts and profiles on Open Media are public. Messages stay private. No social passwords are stored in the app, and connections appear only when an official API or open protocol supports them.</Text></View></EntryShell>;
 }
 
-/** After the password or email code, people who added a passkey confirm with it (ADR 0034). */
+/** After the password or email code, people who added a passkey or an authenticator app confirm with it (ADR 0034, ADR 0042). */
 function PasskeyStep({ onSignOut }: { onSignOut: () => Promise<void> }) {
   const { colors } = useOpenMediaTheme(); const styles = createStyles(colors);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [totpFactor, setTotpFactor] = useState<string>();
+  const [code, setCode] = useState('');
+  useEffect(() => { authenticatorStepFactor().then(setTotpFactor).catch(() => undefined); }, []);
   const supported = passkeysSupportedHere();
-  const confirm = async () => {
+  const run = async (action: () => Promise<void>) => {
     setBusy(true); setMessage('');
-    try { await completePasskeyStep(); }
+    try { await action(); }
     catch (reason) { setMessage(messageFor(reason)); }
     finally { setBusy(false); }
   };
+  const confirm = () => run(completePasskeyStep);
+  const confirmCode = () => run(() => completeAuthenticatorStep(totpFactor!, code));
   return <EntryShell><View style={styles.card}><BrandMark /><Text style={styles.hero}>Confirm it’s you</Text>
-    <Text style={styles.copy}>{supported ? `Your account is protected with a passkey. Use it to ${passwordResetWaitingForPasskey() ? 'save your new password and finish signing in' : 'finish signing in'}: Touch ID, Face ID, Windows Hello, your phone or a security key.` : 'Your account is protected with a passkey. Passkeys in the phone app are coming next; for now, finish signing in at openmedia.site in a browser.'}</Text>
-    {supported ? <Pressable accessibilityRole="button" disabled={busy} onPress={confirm} style={[styles.primary, busy && styles.disabled]}>{busy ? <Loader color={colors.surface} /> : <Text style={styles.primaryText}>Use my passkey</Text>}</Pressable> : null}
+    <Text style={styles.copy}>{totpFactor ? `Your account has a second step. Enter the 6-digit code from your authenticator app${supported ? ', or use your passkey' : ''}.` : supported ? `Your account is protected with a passkey. Use it to ${passwordResetWaitingForPasskey() ? 'save your new password and finish signing in' : 'finish signing in'}: Touch ID, Face ID, Windows Hello, your phone or a security key.` : 'Your account is protected with a passkey. Passkeys in the phone app are coming next; for now, finish signing in at openmedia.site in a browser.'}</Text>
+    {totpFactor ? <><Text style={styles.label}>Authenticator code</Text><TextInput accessibilityLabel="Authenticator code" autoComplete="one-time-code" textContentType="oneTimeCode" keyboardType="number-pad" inputMode="numeric" maxLength={6} returnKeyType="go" onSubmitEditing={code.length === 6 && !busy ? confirmCode : undefined} value={code} onChangeText={(value) => setCode(value.replace(/[^\d]/g, ''))} placeholder="123456" placeholderTextColor={colors.textTertiary} style={[styles.input, styles.codeInput]} />
+      <Pressable accessibilityRole="button" disabled={busy || code.length !== 6} onPress={confirmCode} style={[styles.primary, (busy || code.length !== 6) && styles.disabled]}>{busy ? <Loader color={colors.surface} /> : <Text style={styles.primaryText}>Confirm</Text>}</Pressable></> : null}
+    {supported ? <Pressable accessibilityRole="button" disabled={busy} onPress={confirm} style={[totpFactor ? styles.secondary : styles.primary, busy && styles.disabled]}>{busy && !totpFactor ? <Loader color={colors.surface} /> : <Text style={totpFactor ? styles.secondaryText : styles.primaryText}>Use my passkey</Text>}</Pressable> : null}
     {message ? <Text accessibilityLiveRegion="assertive" style={styles.error}>{message}</Text> : null}
     <Pressable accessibilityRole="button" disabled={busy} onPress={() => { onSignOut().catch(() => undefined); }} style={styles.secondary}><Text style={styles.secondaryText}>Sign out</Text></Pressable>
   </View></EntryShell>;
@@ -436,6 +448,17 @@ function ProfileSetup({ session, error, onError, onComplete, onSignOut }: { sess
     finally { setBusy(false); }
   };
   return <EntryShell><View style={styles.card}><BrandMark /><Text style={styles.hero}>Create your Open Media profile</Text><Text style={styles.copy}>This is how people will find and message you. Your email stays private.</Text><Text style={styles.label}>Name</Text><TextInput accessibilityLabel="Display name" autoComplete="name" maxLength={80} value={displayName} onChangeText={setDisplayName} placeholder="Your name" placeholderTextColor={colors.textTertiary} style={styles.input} /><Text style={styles.label}>Handle</Text><View style={styles.handleRow}><Text style={styles.at}>@</Text><TextInput accessibilityLabel="Handle" autoCapitalize="none" maxLength={24} value={handle} onChangeText={(value) => setHandle(value.toLowerCase().replace(/[^a-z0-9_]/g, ''))} placeholder="yourhandle" placeholderTextColor={colors.textTertiary} style={styles.handleInput} /></View><Text style={styles.hint}>3–24 lowercase letters, numbers, or underscores.</Text><Pressable accessibilityRole="button" disabled={busy || !displayName.trim() || handle.length < 3} onPress={submit} style={[styles.primary, (busy || !displayName.trim() || handle.length < 3) && styles.disabled]}>{busy ? <Loader color={colors.surface} /> : <Text style={styles.primaryText}>Finish setup</Text>}</Pressable><Pressable accessibilityRole="button" disabled={busy} onPress={onSignOut} style={styles.secondary}><Text style={styles.secondaryText}>Use a different email</Text></Pressable>{error ? <Text accessibilityLiveRegion="assertive" style={styles.error}>{error}</Text> : null}</View></EntryShell>;
+}
+
+/** The web app's sign-in page, returning to where the person was. */
+function openSignInGateway() {
+  const here = `${window.location.pathname}${window.location.hash}`;
+  window.location.assign(here === '/' || here.startsWith('/auth') ? gatewayPath : `${gatewayPath}?next=${encodeURIComponent(here)}`);
+}
+
+function ToSignInGateway() {
+  useEffect(() => { openSignInGateway(); }, []);
+  return <CenteredStatus label="Opening sign-in…" />;
 }
 
 /** Shown in the other browser after it passed a sign-in link to the Open Media window (local Mac setup). */
