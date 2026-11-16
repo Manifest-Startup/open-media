@@ -1,19 +1,20 @@
 {
   "name": "open-media-cli",
-  "version": "0.1.0",
-  "description": "Open Media from the command line: one feed and search across Open Media, Farcaster, Lens, Hive and DeSo, Bay Area events, your account, and MCP setup for agents.",
+  "version": "0.3.0",
+  "description": "Open Media from the command line: every Open Media tool as a command, browser sign-in, the REST API, shell completion, and MCP setup for agents.",
   "license": "MIT",
   "type": "module",
   "bin": { "open-media": "dist/cli.js" },
   "files": ["dist", "README.md"],
   "engines": { "node": ">=18" },
   "homepage": "https://api.openmedia.site/developers",
-  "repository": { "type": "git", "url": "git+https://github.com/mihirkavi/open-media.git", "directory": "packages/cli" },
-  "bugs": { "url": "https://github.com/mihirkavi/open-media/issues" },
+  "repository": { "type": "git", "url": "git+https://github.com/Manifest-Startup/open-media.git", "directory": "packages/cli" },
+  "bugs": { "url": "https://github.com/Manifest-Startup/open-media/issues" },
   "keywords": ["open-media", "cli", "social", "farcaster", "lens", "hive", "deso", "mcp", "agents"],
   "scripts": {
     "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist/cli.js",
     "test": "node --import tsx --test src/*.test.ts",
+    "test:local": "OPEN_MEDIA_LOCAL_STACK=1 node --import tsx --test src/local.integration.test.ts",
     "prepublishOnly": "npm run build"
   }
 }

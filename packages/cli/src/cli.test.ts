@@ -1,17 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { run } from './cli';
-
-async function capture(argv: string[], env: Record<string, string | undefined> = {}, fetchImpl?: typeof fetch) {
-  const out: string[] = []; const err: string[] = [];
-  const log = console.log; const error = console.error; const realFetch = globalThis.fetch;
-  console.log = (...args: unknown[]) => { out.push(args.join(' ')); };
-  console.error = (...args: unknown[]) => { err.push(args.join(' ')); };
-  if (fetchImpl) globalThis.fetch = fetchImpl;
-  try { return { code: await run(argv, env), out: out.join('\n'), err: err.join('\n') }; }
-  finally { console.log = log; console.error = error; globalThis.fetch = realFetch; }
-}
+import { capture, fakeOpenMedia } from './testing';
 
 const page = { data: [{ id: 'p1', network: 'lens', author: { name: 'Ada', handle: '@ada', avatarUrl: null }, title: null, text: 'Hello', createdAt: '2026-10-25T00:00:00Z', url: 'https://lens.example/p1', media: [], engagement: null, why: { used: ['Newest first'], filters: [], notUsed: [] } }], unavailable: [], nextCursor: null, next: null };
 
@@ -28,7 +18,7 @@ test('feed prints posts for people and JSON for agents', async () => {
 });
 
 test('wrong commands and missing tokens are usage errors, and posting needs --yes', async () => {
-  assert.equal((await capture(['nope'])).code, 2);
+  assert.equal((await capture(['nope'], {}, fakeOpenMedia({ publicTools: [] }).fetch)).code, 2);
   assert.equal((await capture(['feed', '--sources', 'myspace'])).code, 2);
   const noToken = await capture(['me']);
   assert.equal(noToken.code, 2);
@@ -54,7 +44,7 @@ test('mcp-config prints working setups for Claude Code and Codex', async () => {
 });
 
 test('login saves a private session that account commands then use', async () => {
-  const { mkdtempSync, statSync, existsSync } = await import('node:fs');
+  const { mkdtempSync, statSync, readFileSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   const dir = mkdtempSync(join(tmpdir(), 'open-media-cli-'));
@@ -73,11 +63,23 @@ test('login saves a private session that account commands then use', async () =>
   assert.match(asked.out, /--code <code>/, 'without a terminal it explains the second step');
   const done = await capture(['login', 'ada@example.test', '--code', '12345678'], env, fake);
   assert.match(done.out, /Signed in as @ada/);
-  const file = join(dir, 'session.json');
+  const file = join(dir, 'credentials.json');
   assert.equal(statSync(file).mode & 0o777, 0o600);
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).servers['https://api.test'].kind, 'session');
   assert.equal((await capture(['token'], env, fake)).out, 'at1');
   await capture(['me', '--json'], env, fake);
   assert.equal(calls.at(-1)!.auth, 'Bearer at1');
+  assert.match((await capture(['whoami'], env, fake)).out, /@ada .* via emailed code/);
   await capture(['logout'], env, fake);
-  assert.equal(existsSync(file), false);
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).servers['https://api.test'], undefined);
+  assert.equal(calls.at(-1)!.url, '/v1/auth/sign-out');
+});
+
+test('--version, --help and no command', async () => {
+  assert.equal((await capture(['--version'])).out, '0.3.0');
+  const help = await capture(['--help']);
+  assert.equal(help.code, 0);
+  assert.match(help.out, /Every tool is a command/);
+  assert.equal((await capture([])).code, 2);
+  assert.match((await capture(['api', '--help'])).out, /open-media api <METHOD> <path>/);
 });
