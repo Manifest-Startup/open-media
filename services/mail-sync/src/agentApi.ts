@@ -41,7 +41,7 @@ import { parseSearchQuery, postMatchesSearch } from '../../../src/domain/searchQ
 import { relatedSettings, searchSettings, settingIndex } from '../../../src/domain/settings';
 import { availableNetworks, BridgesEnv } from './bridges.js';
 import { contactsKey, ContactsEnv, openCard, sealCard, validCards } from './contactsStore.js';
-import { callRpc, formatPost, formatProfile, openApiDocument, PublicApiEnv, UpstreamPost, UpstreamProfile, withinLimit } from './publicApi.js';
+import { callRpc, decodeCursor, encodeCursor, formatPost, formatProfile, openApiDocument, PublicApiEnv, UpstreamPost, UpstreamProfile, withinLimit } from './publicApi.js';
 import {
   availableChains, cardPaymentsConfigured, checkOnchainPayment, handlePaymentsWebhook, linkWallet, PaymentsEnv, PaymentsError, paymentsAvailability, refreshPayoutAccount, startCardCheckout, startPayoutOnboarding,
 } from './payments.js';
@@ -51,6 +51,9 @@ import { refreshSignIn, requestSignInCode, SignInError, signOut, verifySignInCod
 import { handleSiteRequest, isSitePath, llmsTxt as siteLlmsTxt, searchDocs } from './agentSite.js';
 import { appViewHtml, appViewUri, mcpAppMimeType, postsViewUri } from './mcpAppView.js';
 import { authenticate, PasskeyStepRequired } from './session.js';
+import { connectedCaller, IntegrationError, realtimeToken, storeUploadedVideo } from './appIntegrations.js';
+import { AppContext, isAppId, parseAppContext } from '../../../src/domain/appContext';
+import { isStoredPostVideo, maxVideoBytes } from '../../../src/domain/postVideo';
 import { confirmEvidence, MarketplaceEnv, MarketplaceError, marketplaceConfigured, readEvidence, serviceRpc } from './marketplace.js';
 import { verifyWebBotAuth } from './webBotAuth.js';
 import { runTranslate, TranslateEnv } from './translate.js';
@@ -463,15 +466,44 @@ export class Account {
   async me() {
     const [profile] = await this.rest<{ id: string; handle: string; display_name: string; bio: string; avatar_url: string | null }[]>('GET', `/rest/v1/profiles?id=eq.${this.userId}&select=id,handle,display_name,bio,avatar_url`);
     if (!profile) throw new AgentError(404, 'no_profile', 'This account has no profile yet. Choose a name and handle with PUT /v1/me/profile (or the set_up_profile tool), or in the app.');
-    return { id: profile.id, handle: profile.handle, displayName: profile.display_name, bio: profile.bio, avatarUrl: profile.avatar_url, url: `${this.origin}/v1/profiles/${profile.handle}` };
+    // display_name and avatar_url are the integration contract's names (ADR 0041); the rest stay as they were.
+    return { id: profile.id, handle: profile.handle, displayName: profile.display_name, bio: profile.bio, avatarUrl: profile.avatar_url, display_name: profile.display_name, avatar_url: profile.avatar_url, url: `${this.origin}/v1/profiles/${profile.handle}` };
   }
 
-  async publish(body: unknown, clientId: string = crypto.randomUUID()) {
+  /**
+   * Publishes a post. An app (ADR 0041) may attach a video it uploaded with POST /v1/me/media/videos,
+   * sent back unchanged, and a context; the response then also has the post under `post`.
+   */
+  async publish(body: unknown, clientId: string = crypto.randomUUID(), options: { video?: unknown; context?: unknown } = {}) {
     const text = typeof body === 'string' ? body.trim() : '';
-    if (!text) throw new AgentError(400, 'bad_request', 'Write something before publishing.');
+    const video = options.video === undefined || options.video === null ? null : this.ownVideo(options.video);
+    if (!text && !video) throw new AgentError(400, 'bad_request', 'Write something before publishing.');
     if (text.length > maxPostLength) throw new AgentError(400, 'bad_request', `Posts can be up to ${maxPostLength} characters.`);
-    const post = await this.rpc<UpstreamPost>('open_media_create_post', { p_client_id: clientId, p_body: text, p_video: null });
-    return formatPost(post, this.origin, this.env.SUPABASE_URL);
+    const context = options.context === undefined || options.context === null ? null : appContext(options.context);
+    const post = await this.rpc<UpstreamPost>('open_media_create_post', { p_client_id: clientId, p_body: text, p_video: video, ...(context ? { p_context: context } : {}) });
+    const formatted = formatPost(post, this.origin, this.env.SUPABASE_URL);
+    return video || context ? { ...formatted, post: formatted } : formatted;
+  }
+
+  /** A video object from this person's own upload; the database checks the file exists and is theirs. */
+  private ownVideo(value: unknown) {
+    if (!isStoredPostVideo(value) || !value.path.startsWith(`${this.userId}/`)) throw new AgentError(400, 'bad_request', 'video must be the object POST /v1/me/media/videos returned, sent back unchanged.');
+    const { path, posterPath, durationSeconds, width, height, contentType, sha256 } = value;
+    return { path, posterPath: posterPath ?? null, durationSeconds, width, height, contentType, sha256 };
+  }
+
+  /** Stores a raw video upload in the person's own folder (ADR 0041). */
+  async uploadVideo(request: Request) {
+    try {
+      return { video: await storeUploadedVideo({ supabaseUrl: this.env.SUPABASE_URL, publishableKey: this.env.SUPABASE_PUBLISHABLE_KEY, token: this.token, userId: this.userId, request }) };
+    } catch (error) {
+      throw error instanceof IntegrationError ? new AgentError(error.status, error.code, error.message) : error;
+    }
+  }
+
+  /** The person's own short-lived session, for a browser to subscribe to Realtime (ADR 0041). */
+  realtimeToken() {
+    return realtimeToken(this.env.SUPABASE_URL, this.env.SUPABASE_PUBLISHABLE_KEY, this.token);
   }
 
   /**
@@ -524,19 +556,26 @@ export class Account {
     return { reported: id, note: 'Reports are weighted signals: each person counts once, verified people and people whose past reports were upheld count for more, and a post is hidden for review once the signal is strong enough. See /policies/listings.' };
   }
 
-  async conversations(limitMessages = 20) {
-    const memberships = await this.rest<{ conversation_id: string }[]>('GET', `/rest/v1/conversation_members?user_id=eq.${this.userId}&select=conversation_id`);
-    const ids = memberships.map((row) => row.conversation_id);
-    if (!ids.length) return { data: [] };
+  /**
+   * The person's conversations. `data` is the original shape; `conversations` is the integration
+   * contract's (ADR 0041), with members, the last message and the app context. `app` keeps only
+   * conversations an app marked with its context.
+   */
+  async conversations(limitMessages = 20, options: { app?: string; ids?: string[] } = {}) {
+    if (options.app !== undefined && !isAppId(options.app)) throw new AgentError(400, 'bad_request', 'app must be the name of an integrated app, e.g. manifest.');
+    const memberships = options.ids ?? (await this.rest<{ conversation_id: string }[]>('GET', `/rest/v1/conversation_members?user_id=eq.${this.userId}&select=conversation_id`)).map((row) => row.conversation_id);
+    if (!memberships.length) return { data: [], conversations: [] };
+    const conversations = await this.rest<{ id: string; kind: string; title: string | null; updated_at: string; context: AppContext | null }[]>('GET', `/rest/v1/conversations?id=in.(${memberships.join(',')})&select=id,kind,title,updated_at,context${options.app ? `&source_app=eq.${options.app}` : ''}&order=updated_at.desc`);
+    const ids = conversations.map((row) => row.id);
+    if (!ids.length) return { data: [], conversations: [] };
     const list = `(${ids.join(',')})`;
-    const [conversations, members, messages] = await Promise.all([
-      this.rest<{ id: string; kind: string; title: string | null; updated_at: string }[]>('GET', `/rest/v1/conversations?id=in.${list}&select=id,kind,title,updated_at&order=updated_at.desc`),
+    const [members, messages] = await Promise.all([
       this.rest<{ conversation_id: string; user_id: string }[]>('GET', `/rest/v1/conversation_members?conversation_id=in.${list}&select=conversation_id,user_id`),
       this.rest<{ id: string; conversation_id: string; sender_id: string; body: string; created_at: string }[]>('GET', `/rest/v1/messages?conversation_id=in.${list}&select=id,conversation_id,sender_id,body,created_at&order=created_at.desc&limit=${Math.min(500, ids.length * limitMessages)}`),
     ]);
     const people = [...new Set(members.map((row) => row.user_id))];
     // Shown names come from the server, so a name someone withheld never reaches an agent.
-    const profiles = people.length ? await this.rpc<{ id: string; handle: string; displayName: string }[]>('open_media_profile_cards', { p_ids: people }) : [];
+    const profiles = people.length ? await this.rpc<{ id: string; handle: string; displayName: string; avatarUrl?: string | null }[]>('open_media_profile_cards', { p_ids: people }) : [];
     const byId = new Map((profiles ?? []).map((row) => [row.id, row]));
     const name = (id: string) => byId.get(id)?.displayName || byId.get(id)?.handle || 'Someone';
     // Receipts (ADR 0026): the same rules as the app, including hidden read receipts.
@@ -549,15 +588,30 @@ export class Account {
       return { receipt: receiptOf(message), ...(message.readAt ? { readAt: message.readAt } : {}) };
     };
     const ownRead = (conversationId: string) => receipts.find((receipt) => receipt.conversation_id === conversationId && receipt.user_id === this.userId)?.read_at ?? undefined;
+    const unreadIn = (conversationId: string) => unreadCount(messages.filter((message) => message.conversation_id === conversationId)
+      .map((message) => ({ id: message.id, sourceMessageId: message.id, conversationId, senderPersonId: message.sender_id, senderIdentityId: '', recipientPersonIds: [], sentAt: message.created_at, body: '', source: 'open_media' as const, channel: 'native' as const, direction: message.sender_id === this.userId ? 'outbound' as const : 'inbound' as const, deliveryState: 'sent' as const })), ownRead(conversationId));
+    const titleOf = (conversation: { id: string; title: string | null }) => conversation.title ?? members.filter((row) => row.conversation_id === conversation.id && row.user_id !== this.userId).map((row) => name(row.user_id)).join(', ');
     return {
+      conversations: conversations.map((conversation) => {
+        const last = messages.find((message) => message.conversation_id === conversation.id);
+        return {
+          id: conversation.id,
+          kind: conversation.kind,
+          title: titleOf(conversation),
+          context: conversation.context ?? null,
+          members: members.filter((row) => row.conversation_id === conversation.id).map((row) => ({ id: row.user_id, handle: byId.get(row.user_id)?.handle ?? null, display_name: name(row.user_id), avatar_url: byId.get(row.user_id)?.avatarUrl ?? null })),
+          last_message: last ? { id: last.id, body: last.body, sender_id: last.sender_id, created_at: last.created_at } : null,
+          unread_count: unreadIn(conversation.id),
+          updated_at: conversation.updated_at,
+        };
+      }),
       data: conversations.map((conversation) => ({
         id: conversation.id,
         kind: conversation.kind,
-        title: conversation.title ?? members.filter((row) => row.conversation_id === conversation.id && row.user_id !== this.userId).map((row) => name(row.user_id)).join(', '),
+        title: titleOf(conversation),
         with: members.filter((row) => row.conversation_id === conversation.id && row.user_id !== this.userId).map((row) => ({ handle: byId.get(row.user_id)?.handle ?? null, name: name(row.user_id) })),
         updatedAt: conversation.updated_at,
-        unread: unreadCount(messages.filter((message) => message.conversation_id === conversation.id)
-          .map((message) => ({ id: message.id, sourceMessageId: message.id, conversationId: conversation.id, senderPersonId: message.sender_id, senderIdentityId: '', recipientPersonIds: [], sentAt: message.created_at, body: '', source: 'open_media' as const, channel: 'native' as const, direction: message.sender_id === this.userId ? 'outbound' as const : 'inbound' as const, deliveryState: 'sent' as const })), ownRead(conversation.id)),
+        unread: unreadIn(conversation.id),
         messages: messages.filter((message) => message.conversation_id === conversation.id).slice(0, limitMessages).reverse()
           .map((message) => ({ id: message.id, from: message.sender_id === this.userId ? 'me' : name(message.sender_id), body: message.body, sentAt: message.created_at, ...(message.sender_id === this.userId ? receiptOfMessage(conversation.id, message.created_at) : {}) })),
       })),
@@ -577,23 +631,52 @@ export class Account {
     return this.rpc<{ shareReadReceipts: boolean }>('open_media_set_read_receipts', { p_share: share });
   }
 
-  async startConversation(handle: unknown) {
+  /** Opens (or re-uses) the direct conversation with someone. An app's context is set only if it has none. */
+  async startConversation(handle: unknown, contextInput?: unknown) {
     const clean = typeof handle === 'string' ? handle.replace(/^@/, '').toLowerCase() : '';
     if (!handlePattern.test(clean)) throw new AgentError(400, 'bad_request', 'Give the Open Media handle of the person to message.');
+    const context = contextInput === undefined || contextInput === null ? null : appContext(contextInput);
     const person = await this.rpc<{ id: string } | null>('open_media_public_profile', { p_handle: clean });
     if (!person) throw new AgentError(404, 'not_found', `No one is called @${clean} on Open Media.`);
     if (person.id === this.userId) throw new AgentError(400, 'bad_request', 'That’s you.');
     const id = await this.rpc<string>('open_media_start_direct_conversation', { p_other_user_id: person.id });
-    return { id, with: `@${clean}` };
+    if (context) await this.rpc('open_media_set_conversation_context', { p_conversation_id: id, p_context: context });
+    const [conversation] = (await this.conversations(1, { ids: [id] })).conversations;
+    return { id, with: `@${clean}`, conversation: conversation ?? null };
   }
 
-  async send(conversationId: string, body: unknown) {
+  /** Messages in one conversation, newest last. `before` is a message id or a time. */
+  async messages(conversationId: string, options: { limit?: unknown; before?: unknown } = {}) {
+    if (!uuid.test(conversationId)) throw new AgentError(404, 'not_found', 'Conversation not found.');
+    const limit = options.limit === undefined || options.limit === null || options.limit === '' ? 50 : Number(options.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new AgentError(400, 'bad_request', 'limit must be an integer from 1 to 200.');
+    const [conversation] = await this.rest<{ id: string }[]>('GET', `/rest/v1/conversations?id=eq.${conversationId}&select=id`);
+    if (!conversation) throw new AgentError(404, 'not_found', 'Conversation not found.');
+    let before = '';
+    if (typeof options.before === 'string' && options.before) {
+      if (uuid.test(options.before)) {
+        const [anchor] = await this.rest<{ created_at: string }[]>('GET', `/rest/v1/messages?id=eq.${options.before}&conversation_id=eq.${conversationId}&select=created_at`);
+        if (!anchor) throw new AgentError(400, 'bad_request', 'before must be a message in this conversation or a time.');
+        before = anchor.created_at;
+      } else if (!Number.isNaN(Date.parse(options.before))) before = new Date(options.before).toISOString();
+      else throw new AgentError(400, 'bad_request', 'before must be a message id or an ISO time.');
+    }
+    const rows = await this.rest<MessageRow[]>('GET', `/rest/v1/messages?conversation_id=eq.${conversationId}&select=${messageColumns}${before ? `&created_at=lt.${encodeURIComponent(before)}` : ''}&order=created_at.desc,id.desc&limit=${limit}`);
+    return { messages: rows.reverse().map(messageView) };
+  }
+
+  /** Sends a message. The same client id (or Idempotency-Key) makes a retry land once. */
+  async send(conversationId: string, body: unknown, clientIdInput?: unknown) {
     if (!uuid.test(conversationId)) throw new AgentError(404, 'not_found', 'Conversation not found.');
     const text = typeof body === 'string' ? body.trim() : '';
     if (!text) throw new AgentError(400, 'bad_request', 'Write a message first.');
     if (text.length > 8000) throw new AgentError(400, 'bad_request', 'Messages can be up to 8,000 characters.');
-    await this.rest('POST', '/rest/v1/messages', { conversation_id: conversationId, sender_id: this.userId, client_id: crypto.randomUUID(), body: text, transport: 'open_media' });
-    return { sent: true, conversationId };
+    if (clientIdInput !== undefined && clientIdInput !== null && (typeof clientIdInput !== 'string' || !uuid.test(clientIdInput))) throw new AgentError(400, 'bad_request', 'client_id must be a UUID.');
+    const clientId = typeof clientIdInput === 'string' ? clientIdInput.toLowerCase() : crypto.randomUUID();
+    const [created] = await this.rest<MessageRow[]>('POST', `/rest/v1/messages?on_conflict=sender_id,client_id&select=${messageColumns}`, { conversation_id: conversationId, sender_id: this.userId, client_id: clientId, body: text, transport: 'open_media' }, 'return=representation,resolution=ignore-duplicates');
+    const row = created ?? (await this.rest<MessageRow[]>('GET', `/rest/v1/messages?sender_id=eq.${this.userId}&client_id=eq.${clientId}&select=${messageColumns}`))[0];
+    if (row && row.conversation_id !== conversationId) throw new AgentError(409, 'conflict', 'That client_id was already used for a message in another conversation.');
+    return { sent: true, conversationId, message: row ? messageView(row) : null };
   }
 
   async exportData() {
@@ -1213,7 +1296,12 @@ export class Account {
     return this.webFeedAccount.exportOpml(me?.displayName);
   }
 
-  async myFeed(options: { lens?: unknown; manifest?: unknown; request?: unknown; sources?: Source[]; kind?: 'feed' | 'clips'; cursor?: string }) {
+  async myFeed(options: { lens?: unknown; manifest?: unknown; request?: unknown; sources?: Source[]; kind?: 'feed' | 'clips'; cursor?: string; app?: string }) {
+    // An app's own posts (ADR 0041): newest first, as the person, with whether they liked each one.
+    if (options.app !== undefined) {
+      const page = await appFeed((args) => this.rpc<UpstreamPost[]>('open_media_public_posts', args), this.origin, this.env.SUPABASE_URL, { app: options.app, kind: options.kind, cursor: options.cursor });
+      return { ...page, data: page.data.map(({ engagement, ...post }) => ({ ...post, viewer: { liked: engagement?.liked === true } })) };
+    }
     const lens = await lensCall(() => resolveLens(this.env, options));
     const followedAuthorIds = lens.permissions.includes('follows') ? await this.followedAuthorIds() : undefined;
     return feed(this.env, this.origin, { sources: options.sources, kind: options.kind, cursor: options.cursor, lens, context: { followedAuthorIds } });
@@ -1339,6 +1427,39 @@ export class Account {
     const text = await response.text();
     return (text ? JSON.parse(text) : null) as T;
   }
+}
+
+// ─── App integrations (ADR 0041) ─────────────────────────────────────────────
+
+/** A context an app sent, checked here first so the app gets a precise reason. */
+function appContext(value: unknown): AppContext {
+  const check = parseAppContext(value);
+  if (!check.ok) throw new AgentError(400, 'bad_request', check.reason);
+  return check.context;
+}
+
+interface MessageRow { id: string; conversation_id: string; sender_id: string; body: string; created_at: string; reply_to_message_id: string | null }
+const messageColumns = 'id,conversation_id,sender_id,body,created_at,reply_to_message_id';
+function messageView(row: MessageRow) {
+  return { id: row.id, conversation_id: row.conversation_id, sender_id: row.sender_id, body: row.body, created_at: row.created_at, reply_to_message_id: row.reply_to_message_id ?? null };
+}
+
+/** One app's public posts, newest first; `list` runs open_media_public_posts anonymously or as the person. */
+async function appFeed(list: (args: Record<string, unknown>) => Promise<UpstreamPost[]>, origin: string, supabaseUrl: string, options: { app: string; kind?: 'feed' | 'clips'; cursor?: string; limit?: number }) {
+  if (!isAppId(options.app)) throw new AgentError(400, 'bad_request', 'app must be the name of an integrated app, e.g. manifest.');
+  const cursor = options.cursor ? decodeCursor(options.cursor) : undefined;
+  if (options.cursor && !cursor) throw new AgentError(400, 'bad_request', 'The cursor is invalid. Use nextCursor from a previous page.');
+  const limit = options.limit ?? 20;
+  const rows = await list({ p_limit: limit, p_before_created_at: cursor?.createdAt ?? null, p_before_id: cursor?.id ?? null, p_author_handle: null, p_media: options.kind === 'clips' ? 'video' : null, p_app: options.app });
+  const items = Array.isArray(rows) ? rows : [];
+  const last = items[items.length - 1];
+  return {
+    data: items.map((row) => ({ ...formatPost(row, origin, supabaseUrl), engagement: row.engagement ?? null })),
+    app: options.app,
+    kind: options.kind ?? 'feed',
+    sources: ['open-media'],
+    nextCursor: items.length === limit && last ? encodeCursor({ createdAt: last.createdAt, id: last.id }) : null,
+  };
 }
 
 /** Translation for agents (ADR 0022): public text is cached by its hash, private text is never stored. */
@@ -1759,6 +1880,7 @@ function baseOpenApi(origin: string) {
         { name: 'mode', in: 'query', schema: { type: 'string', enum: ['raw', 'relevant'] }, description: 'Older name for the built-in lenses; prefer lens.' },
         { name: 'lens', in: 'query', schema: { type: 'string' }, description: 'raw, relevant, work, or a shared lens id from /v1/lenses (ADR 0017).' },
         { name: 'cursor', in: 'query', schema: { type: 'string' }, description: 'nextCursor from a previous page.' },
+        { name: 'app', in: 'query', schema: { type: 'string', enum: ['manifest'] }, description: 'Only Open Media posts an integrated app published with its context (ADR 0041); each item is then a Post, not an AgentPost.' },
       ], responses: { 200: ok('A page of posts', { type: 'object', properties: { data: { type: 'array', items: { $ref: '#/components/schemas/AgentPost' } }, unavailable: { type: 'array', items: { type: 'string' } }, nextCursor: { type: ['string', 'null'] }, next: { type: ['string', 'null'] } } }), 400: error } } },
       '/v1/search': { get: { summary: 'Plain-language search across public posts on every network, plus matching settings', parameters: [{ name: 'q', in: 'query', required: true, schema: { type: 'string', maxLength: 200 } }], responses: { 200: ok('Results with what was understood and how each network was searched'), 400: error } } },
       '/v1/networks': { get: { summary: 'Every network and connector, with what works today', responses: { 200: ok('Networks and capabilities') } } },
@@ -1786,19 +1908,33 @@ function baseOpenApi(origin: string) {
         get: { summary: 'Your profile', security: bearer, responses: { 200: ok('Profile'), 401: error } },
         delete: { summary: 'Delete your account (irreversible)', security: bearer, requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['confirmation'], properties: { confirmation: { type: 'string', const: 'delete my account' } } } } } }, responses: { 200: ok('Deleted'), 400: error, 401: error } },
       },
-      '/v1/me/posts': { post: { summary: 'Publish a public post', security: bearer, requestBody: textBody('body', maxPostLength), responses: { 201: ok('The new post', { $ref: '#/components/schemas/Post' }), 400: error, 401: error } } },
-      '/v1/me/posts/{id}': { delete: { summary: 'Delete one of your posts', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], responses: { 200: ok('Deleted'), 401: error, 403: error } } },
+      '/v1/me/posts': { post: { summary: 'Publish a public post, optionally with a video from POST /v1/me/media/videos and an app context (ADR 0041)', security: bearer, requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: {
+        body: { type: 'string', maxLength: maxPostLength, description: 'May be empty when video is set. text is accepted too.' },
+        video: { type: 'object', description: 'The video object POST /v1/me/media/videos returned, unchanged.' },
+        context: { $ref: '#/components/schemas/AppContext' },
+        client_id: { type: 'string', format: 'uuid', description: 'Retrying with the same client_id (or Idempotency-Key) returns the first post.' },
+      } } } } }, responses: { 201: ok('The new post (with video or context set, also under post)', { $ref: '#/components/schemas/Post' }), 400: error, 401: error } } },
+      '/v1/me/media/videos': { post: { summary: 'Upload a video (raw body, at most 100 MB, MP4, MOV or WebM) into your own folder of the post-videos bucket. Nothing in the file is changed. Pass the returned video to POST /v1/me/posts.', security: bearer, parameters: [
+        { name: 'duration_ms', in: 'query', schema: { type: 'integer', minimum: 1 }, description: 'Only used when the file does not say its length (some browser WebM recordings).' },
+        { name: 'width', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 8192 } },
+        { name: 'height', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 8192 } },
+      ], requestBody: { required: true, content: { 'video/mp4': { schema: { type: 'string', format: 'binary' } }, 'video/quicktime': { schema: { type: 'string', format: 'binary' } }, 'video/webm': { schema: { type: 'string', format: 'binary' } } } }, responses: { 201: ok('The stored video', { type: 'object', required: ['video'], properties: { video: { $ref: '#/components/schemas/UploadedVideo' } } }), 400: error, 401: error, 411: error, 413: error, 415: error, 422: error } } },
+      '/v1/me/realtime-token': { post: { summary: 'Your own short-lived session for Supabase Realtime (postgres_changes on messages, limited to your conversations by row-level security). Ask again when it expires.', security: bearer, responses: { 200: ok('Realtime credentials', { type: 'object', required: ['supabase_url', 'anon_key', 'access_token', 'expires_at'], properties: { supabase_url: { type: 'string', format: 'uri' }, anon_key: { type: 'string' }, access_token: { type: 'string' }, expires_at: { type: ['integer', 'null'], description: 'Unix seconds' } } }), 401: error } } },
+      '/v1/me/posts/{id}': { delete: { summary: 'Delete one of your posts (and its video file)', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], responses: { 200: ok('Deleted'), 400: error, 401: error, 403: error } } },
       '/v1/posts/{id}/report': { post: { summary: 'Report a post for review', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', enum: [...reportReasons] }, details: { type: 'string', maxLength: 1000 } } } } } }, responses: { 200: ok('Reported'), 400: error, 401: error } } },
       '/v1/me/conversations': {
-        get: { summary: 'Your conversations with recent messages', security: bearer, responses: { 200: ok('Conversations'), 401: error } },
-        post: { summary: 'Start a conversation with a handle', security: bearer, requestBody: textBody('handle', 24), responses: { 201: ok('The conversation'), 404: error, 401: error } },
+        get: { summary: 'Your conversations with recent messages (data), and in the app-integration shape (conversations)', security: bearer, parameters: [{ name: 'app', in: 'query', schema: { type: 'string', enum: ['manifest'] }, description: 'Only conversations an integrated app marked with its context (ADR 0041).' }], responses: { 200: ok('Conversations', { type: 'object', properties: { data: { type: 'array', items: { type: 'object' } }, conversations: { type: 'array', items: { $ref: '#/components/schemas/Conversation' } } } }), 400: error, 401: error } },
+        post: { summary: 'Start (or re-use) the direct conversation with a handle. context is set only if the conversation has none.', security: bearer, requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['handle'], properties: { handle: { type: 'string', maxLength: 25 }, context: { $ref: '#/components/schemas/AppContext' } } } } } }, responses: { 201: ok('The conversation', { type: 'object', properties: { id: { type: 'string', format: 'uuid' }, with: { type: 'string' }, conversation: { $ref: '#/components/schemas/Conversation' } } }), 400: error, 404: error, 401: error } },
       },
-      '/v1/me/posts/{id}/like': { put: { summary: 'Like an Open Media post', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: ok('Liked'), 400: error, 401: error, 404: error } }, delete: { summary: 'Unlike an Open Media post', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: ok('Unliked'), 401: error, 404: error } } },
+      '/v1/me/posts/{id}/like': { put: { summary: 'Like an Open Media post', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: ok('Liked'), 400: error, 401: error, 404: error } }, post: { summary: 'Like an Open Media post (the same as PUT)', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: ok('Liked'), 400: error, 401: error, 404: error } }, delete: { summary: 'Unlike an Open Media post', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: ok('Unliked'), 401: error, 404: error } } },
       '/v1/me/posts/{id}/reshare': { put: { summary: 'Reshare an Open Media post', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: ok('Reshared'), 400: error, 401: error, 404: error } }, delete: { summary: 'Undo a reshare', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: ok('Undone'), 401: error, 404: error } } },
       '/v1/me/posts/{id}/comments': { get: { summary: 'Read a post’s comments', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: ok('Comments'), 401: error, 404: error } }, post: { summary: 'Comment on an Open Media post', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], requestBody: textBody('body', 2000), responses: { 201: ok('Commented'), 400: error, 401: error, 404: error } } },
       '/v1/me/conversations/{id}/read': { post: { summary: 'Mark a conversation read (the other person sees it only if both share read receipts)', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], responses: { 200: ok('Read'), 401: error, 403: error, 404: error } } },
       '/v1/me/settings/read-receipts': { put: { summary: 'Share or hide read receipts (reciprocal)', security: bearer, requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['share'], properties: { share: { type: 'boolean' } } } } } }, responses: { 200: ok('Saved'), 400: error, 401: error } } },
-      '/v1/me/conversations/{id}/messages': { post: { summary: 'Send a message', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], requestBody: textBody('body', 8000), responses: { 201: ok('Sent'), 400: error, 401: error, 403: error } } },
+      '/v1/me/conversations/{id}/messages': {
+        get: { summary: 'Messages in one conversation, newest last', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }, { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200, default: 50 } }, { name: 'before', in: 'query', schema: { type: 'string' }, description: 'A message id or an ISO time: only older messages.' }], responses: { 200: ok('Messages', { type: 'object', properties: { messages: { type: 'array', items: { $ref: '#/components/schemas/Message' } } } }), 400: error, 401: error, 404: error } },
+        post: { summary: 'Send a message. The same client_id (or Idempotency-Key) makes a retry land once.', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['body'], properties: { body: { type: 'string', maxLength: 8000 }, client_id: { type: 'string', format: 'uuid' } } } } } }, responses: { 201: ok('Sent', { type: 'object', properties: { sent: { type: 'boolean' }, conversationId: { type: 'string' }, message: { $ref: '#/components/schemas/Message' } } }), 400: error, 401: error, 403: error, 409: error } },
+      },
       '/v1/me/export': { get: { summary: 'Export a readable copy of your data', security: bearer, responses: { 200: ok('Your data'), 401: error } } },
       '/v1/me/email': { get: { summary: 'Your stored email, newest first', security: bearer, parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 500, default: 50 } }], responses: { 200: ok('Email'), 401: error } } },
       '/v1/me/contacts': {
@@ -1873,7 +2009,7 @@ function baseOpenApi(origin: string) {
         get: { summary: 'Your web feeds as an OPML 2.0 file', security: bearer, responses: { 200: { description: 'OPML', content: { 'text/x-opml': {} } }, 401: error } },
         post: { summary: 'Follow every feed in an OPML file from another reader', security: bearer, requestBody: textBody('opml', 2_000_000), responses: { 200: ok('How many were added and which were skipped'), 400: error, 401: error } },
       },
-      '/v1/me/feed': { get: { summary: 'Your feed through a lens, using who you follow when the lens asks for it', security: bearer, parameters: [{ name: 'lens', in: 'query', schema: { type: 'string' } }, { name: 'kind', in: 'query', schema: { type: 'string', enum: ['feed', 'clips'] } }, { name: 'cursor', in: 'query', schema: { type: 'string' } }], responses: { 200: ok('Posts with their “why”'), 401: error } } },
+      '/v1/me/feed': { get: { summary: 'Your feed through a lens, using who you follow when the lens asks for it. With app, only that app’s posts, each with viewer.liked.', security: bearer, parameters: [{ name: 'lens', in: 'query', schema: { type: 'string' } }, { name: 'kind', in: 'query', schema: { type: 'string', enum: ['feed', 'clips'] } }, { name: 'cursor', in: 'query', schema: { type: 'string' } }, { name: 'app', in: 'query', schema: { type: 'string', enum: ['manifest'] } }], responses: { 200: ok('Posts with their “why”, or with app, Posts with viewer'), 400: error, 401: error } } },
       '/v1/me/follows/{handle}': { delete: { summary: 'Unfollow, or withdraw a request', security: bearer, parameters: [{ name: 'handle', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: ok('Done'), 401: error } } },
       '/v1/me/follow-requests/{id}': { post: { summary: 'Accept or decline a follow request', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['accept'], properties: { accept: { type: 'boolean' } } } } } }, responses: { 200: ok('Done'), 401: error } } },
       '/v1/me/followers/{id}': { delete: { summary: 'Remove a follower', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], responses: { 200: ok('Done'), 401: error } } },
@@ -1936,9 +2072,24 @@ function baseOpenApi(origin: string) {
     },
     components: {
       ...base.components,
-      securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer', description: 'The person’s Open Media access token (Settings → Developers and agents). Expires after about an hour.' } },
+      securitySchemes: {
+        bearerAuth: { type: 'http', scheme: 'bearer', description: 'The person’s Open Media access token (Settings → Developers and agents). Expires after about an hour.' },
+        accountOAuth: { type: 'oauth2', description: '“Sign in with Open Media” (OAuth 2.1 with PKCE; public clients may use a Client ID Metadata Document URL as client_id). Used on /v1/connected/me/… and /account/mcp.', flows: { authorizationCode: { authorizationUrl: `${origin}/authorize`, tokenUrl: `${origin}/oauth/token`, refreshUrl: `${origin}/oauth/token`, scopes: { account: 'Act as the person on their Open Media account' } } } },
+      },
       schemas: {
         ...base.components.schemas,
+        Conversation: { type: 'object', required: ['id', 'kind', 'title', 'context', 'members', 'last_message', 'unread_count', 'updated_at'], properties: {
+          id: { type: 'string', format: 'uuid' }, kind: { type: 'string', enum: ['direct', 'group'] }, title: { type: 'string' }, context: { $ref: '#/components/schemas/AppContext' },
+          members: { type: 'array', items: { type: 'object', properties: { id: { type: 'string', format: 'uuid' }, handle: { type: ['string', 'null'] }, display_name: { type: 'string' }, avatar_url: { type: ['string', 'null'] } } } },
+          last_message: { type: ['object', 'null'], properties: { id: { type: 'string', format: 'uuid' }, body: { type: 'string' }, sender_id: { type: 'string', format: 'uuid' }, created_at: { type: 'string', format: 'date-time' } } },
+          unread_count: { type: 'integer' }, updated_at: { type: 'string', format: 'date-time' },
+        } },
+        Message: { type: 'object', required: ['id', 'conversation_id', 'sender_id', 'body', 'created_at', 'reply_to_message_id'], properties: {
+          id: { type: 'string', format: 'uuid' }, conversation_id: { type: 'string', format: 'uuid' }, sender_id: { type: 'string', format: 'uuid' }, body: { type: 'string' }, created_at: { type: 'string', format: 'date-time' }, reply_to_message_id: { type: ['string', 'null'], format: 'uuid' },
+        } },
+        UploadedVideo: { type: 'object', description: 'Opaque to apps: send it back unchanged as video when publishing.', properties: {
+          path: { type: 'string' }, posterPath: { type: 'null' }, durationSeconds: { type: 'number' }, width: { type: 'integer' }, height: { type: 'integer' }, contentType: { type: 'string', enum: ['video/mp4', 'video/quicktime', 'video/webm'] }, sha256: { type: 'string' }, sizeBytes: { type: 'integer' }, url: { type: 'string', format: 'uri' },
+        } },
         AgentPost: { type: 'object', properties: {
           id: { type: 'string' }, network: { type: 'string', enum: [...sources] },
           author: { type: 'object', properties: { name: { type: 'string' }, handle: { type: 'string' }, avatarUrl: { type: ['string', 'null'] } } },
@@ -1973,6 +2124,17 @@ function operationIdFor(method: string, path: string): string {
  */
 export function fullOpenApi(origin: string) {
   const document = baseOpenApi(origin) as Record<string, any>;
+  // Every /v1/me route is also /v1/connected/me for apps signed in with OAuth (ADR 0041).
+  for (const [path, operations] of Object.entries({ ...document.paths } as Record<string, Record<string, any>>)) {
+    if (path !== '/v1/me' && !path.startsWith('/v1/me/')) continue;
+    const mirrored = `/v1/connected${path.slice(3)}`;
+    document.paths[mirrored] = Object.fromEntries(Object.entries(operations).map(([method, operation]) => [method, {
+      ...operation,
+      summary: `${operation.summary} (as an app signed in with Open Media)`,
+      description: `${operation.description ?? operation.summary}. The same as ${method.toUpperCase()} ${path}, with an OAuth access token for scope account; errors are {error, error_description}.`,
+      security: [{ accountOAuth: ['account'] }],
+    }]));
+  }
   for (const [path, operations] of Object.entries(document.paths as Record<string, Record<string, any>>)) {
     for (const [method, operation] of Object.entries(operations)) {
       if (!operation || typeof operation !== 'object' || !('responses' in operation)) continue;
@@ -2005,12 +2167,14 @@ export async function handleAgentRequest(request: Request, env: AgentEnv, intern
   // Same per-client limit as the read-only API: feed and search fan out to four other networks.
   // The IP limit always applies, so minting agent identities cannot multiply it; a registered
   // agent (auth.md) also gets its own bucket, so one busy agent cannot starve others on its IP.
-  if (!(await withinLimit(env.PUBLIC_API_RATE_LIMITER, `ip:${ip}`))) return limited();
+  // An app's server speaks for many people from one address (ADR 0041), so its requests count per person.
+  const connected = connectedCaller(request);
+  if (!(await withinLimit(env.PUBLIC_API_RATE_LIMITER, connected ? `connected:${connected.userId}` : `ip:${ip}`))) return limited();
   const agent = await agentFromRequest(env, origin, request);
   if (agent && !(await withinLimit(env.PUBLIC_API_RATE_LIMITER, agent))) return limited();
   // Bodies on these routes are small JSON; refuse large ones before reading them. A LinkedIn PDF
   // (up to 2 MB, sent as base64) is the one larger body.
-  const bodyLimit = path === '/v1/me/professional/import' || path === '/v1/me/web-feeds/opml' || path === '/me/mcp' ? 3_000_000 : 262_144;
+  const bodyLimit = path === '/v1/me/media/videos' ? maxVideoBytes : path === '/v1/me/professional/import' || path === '/v1/me/web-feeds/opml' || path === '/me/mcp' ? 3_000_000 : 262_144;
   if (Number(request.headers.get('content-length') ?? '0') > bodyLimit) return json({ error: { code: 'too_large', message: 'The request body is too large.' } }, 0, 413);
   try {
     if (path === '/ask' && (request.method === 'POST' || request.method === 'GET')) return nlwebAsk(request, env, origin);
@@ -2065,6 +2229,12 @@ export async function handleAgentRequest(request: Request, env: AgentEnv, intern
       if (mode !== 'raw' && mode !== 'relevant') throw new AgentError(400, 'bad_request', 'mode must be raw or relevant.');
       const lensId = url.searchParams.get('lens');
       const lens = lensId ? (await lensCall(() => findLens(env, lensId))).lens : undefined;
+      const app = url.searchParams.get('app');
+      if (app !== null) {
+        // One app's own posts (ADR 0041). Only Open Media posts carry an app context.
+        const page = await appFeed((args) => callRpc<UpstreamPost[]>(env, fetch, 'open_media_public_posts', args), origin, env.SUPABASE_URL, { app, kind, cursor: url.searchParams.get('cursor') ?? undefined });
+        return json({ ...page, data: page.data.map(({ engagement: _engagement, ...post }) => post), next: page.nextCursor ? withParams(url, { cursor: page.nextCursor }) : null }, 30);
+      }
       const page = await feed(env, origin, { sources: chosen as Source[] | undefined, kind, mode, lens, cursor: url.searchParams.get('cursor') ?? undefined });
       return json({ ...page, next: page.nextCursor ? withParams(url, { cursor: page.nextCursor }) : null }, 30);
     }
@@ -2118,6 +2288,8 @@ export async function handleAgentRequest(request: Request, env: AgentEnv, intern
 
     // Account routes: every one needs the person's own token.
     const account = await Account.fromRequest(request, env, origin, internal);
+    // A raw video body (ADR 0041): streamed to storage, never parsed as JSON.
+    if (request.method === 'POST' && path === '/v1/me/media/videos') return json(await account.uploadVideo(request), 0, 201);
     const raw = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method) ? await request.json().catch(() => ({})) as unknown : {};
     const body = (raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>;
     // Idempotency-Key: a retried write with the same key returns the first result instead of a copy.
@@ -2125,23 +2297,30 @@ export async function handleAgentRequest(request: Request, env: AgentEnv, intern
     if (idempotencyKey !== undefined && !uuid.test(idempotencyKey)) throw new AgentError(400, 'bad_request', 'Idempotency-Key must be a UUID.');
     if (request.method === 'GET' && path === '/v1/me') return json(await account.me(), 0);
     if (request.method === 'PUT' && path === '/v1/me/profile') return json(await account.setUpProfile(body), 0);
-    if (request.method === 'POST' && path === '/v1/me/posts') return json(await account.publish(body.body ?? body.text, idempotencyKey), 0, 201);
+    if (request.method === 'POST' && path === '/v1/me/posts') {
+      const clientId = idempotencyKey ?? (typeof body.client_id === 'string' && uuid.test(body.client_id) ? body.client_id : undefined);
+      if (body.client_id !== undefined && !clientId) throw new AgentError(400, 'bad_request', 'client_id must be a UUID.');
+      return json(await account.publish(body.body ?? body.text, clientId, { video: body.video, context: body.context }), 0, 201);
+    }
+    if (request.method === 'POST' && path === '/v1/me/realtime-token') return json(account.realtimeToken(), 0);
     const postMatch = path.match(/^\/v1\/me\/posts\/([^/]+)$/);
     if (request.method === 'DELETE' && postMatch) return json(await account.deletePost(decodeURIComponent(postMatch[1])), 0);
     const reportMatch = path.match(/^\/v1\/posts\/([^/]+)\/report$/);
     if (request.method === 'POST' && reportMatch) return json(await account.report(decodeURIComponent(reportMatch[1]), body.reason, body.details), 0);
-    if (request.method === 'GET' && path === '/v1/me/conversations') return json(await account.conversations(), 0);
-    if (request.method === 'POST' && path === '/v1/me/conversations') return json(await account.startConversation(body.handle), 0, 201);
+    if (request.method === 'GET' && path === '/v1/me/conversations') return json(await account.conversations(20, { app: url.searchParams.get('app') ?? undefined }), 0);
+    if (request.method === 'POST' && path === '/v1/me/conversations') return json(await account.startConversation(body.handle, body.context), 0, 201);
     const messageMatch = path.match(/^\/v1\/me\/conversations\/([^/]+)\/messages$/);
-    if (request.method === 'POST' && messageMatch) return json(await account.send(decodeURIComponent(messageMatch[1]), body.body ?? body.text), 0, 201);
+    if (request.method === 'GET' && messageMatch) return json(await account.messages(decodeURIComponent(messageMatch[1]), { limit: url.searchParams.get('limit'), before: url.searchParams.get('before') }), 0);
+    if (request.method === 'POST' && messageMatch) return json(await account.send(decodeURIComponent(messageMatch[1]), body.body ?? body.text, idempotencyKey ?? body.client_id ?? body.clientId), 0, 201);
     if (request.method === 'GET' && path === '/v1/me/export') return json(await account.exportData(), 0);
     if (request.method === 'GET' && path === '/v1/me/email') return json(await account.email(Number(url.searchParams.get('limit') ?? 50)), 0);
     if (request.method === 'POST' && path === '/v1/me/blocks') return json(await account.block(body.handle, body.blocked), 0);
     const interaction = path.match(/^\/v1\/me\/posts\/([^/]+)\/(like|reshare|comments)$/);
     if (interaction && request.method === 'GET' && interaction[2] === 'comments') return json(await account.postComments(decodeURIComponent(interaction[1])), 0);
     if (interaction && request.method === 'POST' && interaction[2] === 'comments') return json(await account.commentOnPost(decodeURIComponent(interaction[1]), body.body ?? body.text, body.clientId), 0, 201);
-    if (interaction && (request.method === 'PUT' || request.method === 'DELETE') && interaction[2] === 'like') return json(await account.likePost(decodeURIComponent(interaction[1]), request.method === 'PUT'), 0);
-    if (interaction && (request.method === 'PUT' || request.method === 'DELETE') && interaction[2] === 'reshare') return json(await account.resharePost(decodeURIComponent(interaction[1]), request.method === 'PUT'), 0);
+    // PUT (or POST) likes or reshares; DELETE undoes it.
+    if (interaction && ['PUT', 'POST', 'DELETE'].includes(request.method) && interaction[2] === 'like') return json(await account.likePost(decodeURIComponent(interaction[1]), request.method !== 'DELETE'), 0);
+    if (interaction && ['PUT', 'POST', 'DELETE'].includes(request.method) && interaction[2] === 'reshare') return json(await account.resharePost(decodeURIComponent(interaction[1]), request.method !== 'DELETE'), 0);
     const readMatch = path.match(/^\/v1\/me\/conversations\/([^/]+)\/read$/);
     if (request.method === 'POST' && readMatch) return json(await account.markRead(decodeURIComponent(readMatch[1])), 0);
     if (request.method === 'PUT' && path === '/v1/me/settings/read-receipts') return json(await account.setReadReceipts(body.share), 0);
@@ -2230,7 +2409,7 @@ export async function handleAgentRequest(request: Request, env: AgentEnv, intern
     }
     const myLensMatch = path.match(/^\/v1\/me\/lenses\/([^/]+)$/);
     if (request.method === 'DELETE' && myLensMatch) return json(await account.deleteLens(decodeURIComponent(myLensMatch[1])), 0);
-    if (request.method === 'GET' && path === '/v1/me/feed') return json(await account.myFeed({ lens: url.searchParams.get('lens') ?? undefined, kind: url.searchParams.get('kind') === 'clips' ? 'clips' : 'feed', cursor: url.searchParams.get('cursor') ?? undefined }), 0);
+    if (request.method === 'GET' && path === '/v1/me/feed') return json(await account.myFeed({ lens: url.searchParams.get('lens') ?? undefined, kind: url.searchParams.get('kind') === 'clips' ? 'clips' : 'feed', cursor: url.searchParams.get('cursor') ?? undefined, app: url.searchParams.get('app') ?? undefined }), 0);
     if (request.method === 'POST' && path === '/v1/me/follows') return json(await account.follow(body.handle) as object, 0, 201);
     const followMatch = path.match(/^\/v1\/me\/follows\/([^/]+)$/);
     if (request.method === 'DELETE' && followMatch) return json(await account.unfollow(decodeURIComponent(followMatch[1])) as object, 0);

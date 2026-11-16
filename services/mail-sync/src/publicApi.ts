@@ -7,6 +7,7 @@
  * `open_media_public_*` database functions: public posts and public profiles.
  * Messages, email, contacts, blocks, and reports are never reachable here.
  */
+import { isAppId } from '../../../src/domain/appContext';
 
 export interface PublicApiEnv {
   SUPABASE_URL: string;
@@ -41,9 +42,12 @@ export interface UpstreamPost {
   id: string;
   body: string;
   createdAt: string;
-  author: { handle: string; displayName: string; avatarUrl: string | null; verified?: boolean };
+  author: { id?: string; handle: string; displayName: string; avatarUrl: string | null; verified?: boolean };
   video?: UpstreamVideo | null;
   listing?: Record<string, unknown> | null;
+  engagement?: { replies: number; reposts: number; likes: number; liked?: boolean; reshared?: boolean } | null;
+  /** An integrated app's context (ADR 0041), or null. */
+  context?: Record<string, unknown> | null;
 }
 
 export interface UpstreamProfile {
@@ -140,6 +144,8 @@ async function listPosts(url: URL, env: PublicApiEnv, fetchImpl: Fetch, authorHa
   const limit = parseLimit(url.searchParams.get('limit'));
   const media = url.searchParams.get('media');
   if (media !== null && media !== 'video') throw new BadRequest('media must be "video" (or left out for all posts).');
+  const app = url.searchParams.get('app');
+  if (app !== null && !isAppId(app)) throw new BadRequest('app must be the name of an integrated app, e.g. manifest.');
   const cursorParam = url.searchParams.get('cursor');
   const cursor = cursorParam ? decodeCursor(cursorParam) : undefined;
   if (cursorParam && !cursor) throw new BadRequest('The cursor is invalid. Use the value from a previous response.');
@@ -155,11 +161,12 @@ async function listPosts(url: URL, env: PublicApiEnv, fetchImpl: Fetch, authorHa
     p_before_id: cursor?.id ?? null,
     p_author_handle: authorHandle ?? null,
     p_media: media,
+    ...(app ? { p_app: app } : {}),
   });
   const items = Array.isArray(posts) ? posts : [];
   const last = items[items.length - 1];
   const nextCursor = items.length === limit && last ? encodeCursor({ createdAt: last.createdAt, id: last.id }) : null;
-  const next = nextCursor ? withParams(url, { cursor: nextCursor, limit: String(limit), ...(media ? { media } : {}) }) : null;
+  const next = nextCursor ? withParams(url, { cursor: nextCursor, limit: String(limit), ...(media ? { media } : {}), ...(app ? { app } : {}) }) : null;
   return jsonResponse(
     { data: items.map((post) => formatPost(post, url.origin, env.SUPABASE_URL)), pagination: { limit, nextCursor, next } },
     30,
@@ -167,31 +174,45 @@ async function listPosts(url: URL, env: PublicApiEnv, fetchImpl: Fetch, authorHa
   );
 }
 
+/**
+ * One public post. The camelCase fields are the original API; `body`, `created_at`, `context`,
+ * `counts` and the snake_case author and video fields were added for app integrations (ADR 0041).
+ */
 export function formatPost(post: UpstreamPost, origin: string, supabaseUrl: string) {
   return {
     id: post.id,
     type: 'post',
     text: post.body,
+    body: post.body,
     createdAt: post.createdAt,
+    created_at: post.createdAt,
     video: post.video ? formatVideo(post.video, supabaseUrl) : null,
     ...(post.listing ? { listing: post.listing } : {}),
     url: `${origin}/v1/posts/${post.id}`,
     author: {
+      id: post.author.id ?? null,
       handle: post.author.handle,
       displayName: post.author.displayName,
+      display_name: post.author.displayName,
       avatarUrl: post.author.avatarUrl,
+      avatar_url: post.author.avatarUrl,
       verified: post.author.verified === true,
       url: `${origin}/v1/profiles/${post.author.handle}`,
     },
+    context: post.context ?? null,
+    counts: { likes: Number(post.engagement?.likes ?? 0), comments: Number(post.engagement?.replies ?? 0), reshares: Number(post.engagement?.reposts ?? 0) },
   };
 }
 
 /** Videos are files in the public `post-videos` bucket; the database stores paths, not URLs. */
 export function formatVideo(video: UpstreamVideo, supabaseUrl: string) {
   const publicUrl = (path: string) => `${supabaseUrl.replace(/\/$/, '')}/storage/v1/object/public/post-videos/${path.split('/').map(encodeURIComponent).join('/')}`;
+  const posterUrl = video.posterPath ? publicUrl(video.posterPath) : null;
   return {
     url: publicUrl(video.path),
-    posterUrl: video.posterPath ? publicUrl(video.posterPath) : null,
+    posterUrl,
+    poster_url: posterUrl,
+    duration_ms: Math.round(Number(video.durationSeconds) * 1000),
     streaming: 'progressive',
     contentType: video.contentType,
     durationSeconds: Number(video.durationSeconds),
@@ -343,19 +364,35 @@ export function openApiDocument(origin: string) {
           width: { type: 'integer' },
           height: { type: 'integer' },
           sha256: { type: 'string', pattern: '^[0-9a-f]{64}$', description: 'SHA-256 of the video file as uploaded.' },
+          poster_url: { type: ['string', 'null'], format: 'uri' },
+          duration_ms: { type: ['integer', 'null'] },
         },
       },
       author: {
         type: 'object',
         required: ['handle', 'displayName', 'url'],
         properties: {
+          id: { type: ['string', 'null'], format: 'uuid' },
           handle: { type: 'string' },
           displayName: { type: 'string' },
+          display_name: { type: 'string' },
           avatarUrl: { type: ['string', 'null'], format: 'uri' },
+          avatar_url: { type: ['string', 'null'], format: 'uri' },
           url: { type: 'string', format: 'uri' },
         },
       },
+      body: { type: 'string', description: 'The same as text.' },
+      created_at: { type: 'string', format: 'date-time' },
+      context: { $ref: '#/components/schemas/AppContext' },
+      counts: { type: 'object', required: ['likes', 'comments', 'reshares'], properties: { likes: { type: 'integer' }, comments: { type: 'integer' }, reshares: { type: 'integer' } } },
     },
+  };
+  const appContextSchema = {
+    type: ['object', 'null'],
+    description: 'Set by an integrated app (ADR 0041). url is always https on that app’s own site. At most 2 KB.',
+    required: ['app'],
+    additionalProperties: false,
+    properties: { app: { type: 'string', enum: ['manifest'] }, idea_id: { type: 'string', maxLength: 200 }, title: { type: 'string', maxLength: 300 }, url: { type: 'string', format: 'uri', maxLength: 2048 } },
   };
   const profileSchema = {
     type: 'object',
@@ -386,6 +423,7 @@ export function openApiDocument(origin: string) {
     { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: maxLimit, default: defaultLimit } },
     { name: 'cursor', in: 'query', schema: { type: 'string' }, description: 'Opaque cursor from pagination.nextCursor.' },
     { name: 'media', in: 'query', schema: { type: 'string', enum: ['video'] }, description: 'Only posts with a video.' },
+    { name: 'app', in: 'query', schema: { type: 'string', enum: ['manifest'] }, description: 'Only posts an integrated app published with its context (ADR 0041).' },
   ];
   const error = { description: 'Error', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } };
   return {
@@ -402,6 +440,7 @@ export function openApiDocument(origin: string) {
       schemas: {
         Post: postSchema,
         Profile: profileSchema,
+        AppContext: appContextSchema,
         Error: { type: 'object', properties: { error: { type: 'object', properties: { code: { type: 'string' }, message: { type: 'string' } } } } },
       },
     },
