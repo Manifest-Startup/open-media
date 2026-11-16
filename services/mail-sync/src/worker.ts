@@ -14,8 +14,9 @@ import { withSecurityHeaders } from './securityHeaders.js';
 import { PublicApiEnv, withinLimit } from './publicApi.js';
 import { MarketplaceEnv, runMarketplaceJobs } from './marketplace.js';
 import { connectedNotFound, connectedPrefix, connectedRequest, connectedResponse } from './appIntegrations.js';
+import { AppWebhookEnv, runAppWebhooks } from './appWebhooks.js';
 
-type WorkerEnv = Env & MailEnv & EventsEnv & OndcEnv & WebAppEnv & AuthEmailEnv & PublicApiEnv & MarketplaceEnv;
+type WorkerEnv = Env & MailEnv & EventsEnv & OndcEnv & WebAppEnv & AuthEmailEnv & PublicApiEnv & MarketplaceEnv & AppWebhookEnv;
 
 /** Every minute: listing checks, statements of reasons and seller confirmations (ADR 0016). */
 const marketplaceCron = '* * * * *';
@@ -140,6 +141,10 @@ export default {
       ctx.waitUntil(runMarketplaceJobs(env).then((done) => {
         if (done.checked || done.notices || done.confirmed || done.sellers) console.log(JSON.stringify({ event: 'marketplace_jobs', ...done }));
       }).catch((error) => console.error(JSON.stringify({ event: 'marketplace_jobs_failed', message: error instanceof Error ? error.message : 'unknown' }))));
+      // Webhooks to integrated apps (ADR 0041), from the outbox the database triggers fill.
+      ctx.waitUntil(runAppWebhooks(env).then((done) => {
+        if (done.delivered || done.failed) console.log(JSON.stringify({ event: 'app_webhooks', ...done }));
+      }).catch((error) => console.error(JSON.stringify({ event: 'app_webhooks_failed', message: error instanceof Error ? error.message : 'unknown' }))));
       return;
     }
     ctx.waitUntil(runScheduledRefresh(env));
