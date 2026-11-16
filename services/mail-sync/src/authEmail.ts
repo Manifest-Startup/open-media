@@ -4,7 +4,8 @@
  * Supabase Auth calls this hook (POST /auth/hooks/send-email, a Standard Webhooks request signed
  * with SEND_EMAIL_HOOK_SECRET) instead of sending its plain default emails. The Worker renders an
  * Open Media email, with a one-tap button and the code, and sends it from security@openmedia.site
- * through Cloudflare Email Sending (the EMAIL binding). Nothing is stored; the code only travels in
+ * through Resend when RESEND_API_KEY is set (free tier; Cloudflare Email Sending needs Workers Paid),
+ * otherwise through Cloudflare Email Sending (the EMAIL binding). Nothing is stored; the code only travels in
  * the email itself.
  */
 
@@ -12,6 +13,8 @@ export interface AuthEmailEnv {
   SUPABASE_URL: string;
   SEND_EMAIL_HOOK_SECRET?: string;
   AUTH_EMAIL_FROM?: string;
+  /** Resend API key (https://resend.com); when set, sign-in emails go through Resend. */
+  RESEND_API_KEY?: string;
   EMAIL?: { send(message: { from: string | { email: string; name: string }; to: string; subject: string; html: string; text: string; headers?: Record<string, string> }): Promise<{ messageId?: string }> };
 }
 
@@ -142,8 +145,9 @@ export function authEmailsFor(payload: HookPayload, supabaseUrl: string, connect
 
 const hookError = (status: number, message: string) => new Response(JSON.stringify({ error: { http_code: status, message } }), { status, headers: { 'content-type': 'application/json' } });
 
-export async function handleSendEmailHook(request: Request, env: AuthEmailEnv): Promise<Response> {
-  if (!env.SEND_EMAIL_HOOK_SECRET || !env.EMAIL) return hookError(503, 'Open Media email is not configured.');
+export async function handleSendEmailHook(request: Request, env: AuthEmailEnv, fetchImpl: typeof fetch = fetch): Promise<Response> {
+  const send = emailSender(env, fetchImpl);
+  if (!env.SEND_EMAIL_HOOK_SECRET || !send) return hookError(503, 'Open Media email is not configured.');
   const body = await request.text();
   if (!(await verifyHookSignature(request.headers, body, env.SEND_EMAIL_HOOK_SECRET))) return hookError(401, 'Invalid signature.');
   let payload: HookPayload;
@@ -156,13 +160,33 @@ export async function handleSendEmailHook(request: Request, env: AuthEmailEnv): 
     const connect = connectionFromRedirect(payload.email_data.redirect_to, origin);
     const connectLink = connect ? (hash: string, type: 'magiclink' | 'signup') => `${origin}/authorize/account/link?challenge=${connect}&token_hash=${encodeURIComponent(hash)}&type=${type}` : undefined;
     for (const email of authEmailsFor(payload, env.SUPABASE_URL, connectLink)) {
-      await env.EMAIL.send({ from, to: email.to, subject: email.subject, html: email.html, text: email.text });
+      await send({ from, to: email.to, subject: email.subject, html: email.html, text: email.text });
     }
   } catch (error) {
     console.error(JSON.stringify({ event: 'auth_email_failed', action: payload.email_data.email_action_type, error: error instanceof Error ? error.message : String(error) }));
     return hookError(502, 'The email could not be sent. Try again in a minute.');
   }
   return new Response('{}', { headers: { 'content-type': 'application/json' } });
+}
+
+type OutgoingEmail = { from: { email: string; name: string }; to: string; subject: string; html: string; text: string };
+
+/** Resend when its key is set, else the Cloudflare EMAIL binding; undefined when neither is configured. */
+export function emailSender(env: Pick<AuthEmailEnv, 'RESEND_API_KEY' | 'EMAIL'>, fetchImpl: typeof fetch = fetch): ((email: OutgoingEmail) => Promise<void>) | undefined {
+  if (env.RESEND_API_KEY) {
+    const key = env.RESEND_API_KEY;
+    return async (email) => {
+      const response = await fetchImpl('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ from: `${email.from.name} <${email.from.email}>`, to: [email.to], subject: email.subject, html: email.html, text: email.text }),
+      });
+      // Resend's error body names the problem (unverified domain, rate limit) and never echoes the key.
+      if (!response.ok) throw new Error(`Resend ${response.status}: ${(await response.text()).slice(0, 200)}`);
+    };
+  }
+  const binding = env.EMAIL;
+  return binding ? async (email) => { await binding.send(email); } : undefined;
 }
 
 /** The app connection a sign-in was started from, when Supabase passes its page back as redirect_to. */
