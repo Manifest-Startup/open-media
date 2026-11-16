@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHmac, randomBytes } from 'node:crypto';
 import test from 'node:test';
 
-import { authEmailsFor, handleSendEmailHook, renderAuthEmail, verifyHookSignature } from './authEmail.js';
+import { authEmailsFor, connectionFromRedirect, handleSendEmailHook, renderAuthEmail, verifyHookSignature } from './authEmail.js';
 
 const key = randomBytes(32);
 const secret = `v1,whsec_${key.toString('base64')}`;
@@ -49,4 +49,21 @@ test('the hook sends from security@openmedia.site only for signed requests', asy
   const failing = await handleSendEmailHook(new Request('https://api.test/auth/hooks/send-email', { method: 'POST', headers: sign(body, 'msg_2'), body }), { ...env, EMAIL: { send: async () => { throw new Error('not onboarded'); } } });
   assert.equal(failing.status, 502);
   assert.equal(((await failing.json()) as { error: { http_code: number } }).error.http_code, 502, 'Supabase shows the hook’s error to the person');
+});
+
+test('a sign-in started on an app’s Connect page gets a button that finishes that connection, not a Supabase link', async () => {
+  const sent: { to: string; text: string; html: string }[] = [];
+  const challenge = 'a'.repeat(64);
+  const env = { SUPABASE_URL: 'https://db.test', SEND_EMAIL_HOOK_SECRET: secret, EMAIL: { send: async (message: { to: string; text: string; html: string }) => { sent.push(message); return {}; } } };
+  const connect = { ...payload, email_data: { ...payload.email_data, redirect_to: `https://api.test/authorize/account/link?challenge=${challenge}` } };
+  const body = JSON.stringify(connect);
+  assert.equal((await handleSendEmailHook(new Request('https://api.test/auth/hooks/send-email', { method: 'POST', headers: sign(body, 'msg_c1'), body }), env)).status, 200);
+  assert.ok(sent[0].text.includes(`https://api.test/authorize/account/link?challenge=${challenge}&token_hash=pkce_abc&type=magiclink`));
+  assert.ok(!sent[0].text.includes('db.test/auth/v1/verify'));
+  assert.ok(sent[0].text.includes('1234 5678') || sent[0].text.includes('12345678'), 'the code is still there for another device');
+  // Another site's redirect never turns into a connect link.
+  assert.equal(connectionFromRedirect(`https://evil.test/authorize/account/link?challenge=${challenge}`, 'https://api.test'), undefined);
+  assert.equal(connectionFromRedirect('https://api.test/authorize/account/link?challenge=nope', 'https://api.test'), undefined);
+  // An ordinary sign-in keeps the normal link.
+  assert.ok(authEmailsFor(payload as never, 'https://db.test')[0].text.includes('https://db.test/auth/v1/verify'));
 });

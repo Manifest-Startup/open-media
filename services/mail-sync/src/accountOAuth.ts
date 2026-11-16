@@ -4,7 +4,9 @@
  *
  * 1. The host sends the person to /authorize (resource …/account/mcp or scope "account").
  * 2. They enter their email; Open Media emails them the same sign-in code the app uses.
- * 3. They enter the code and approve what the host may do. Open Media keeps their session inside
+ *    The email's button comes back to /authorize/account/link in the same browser, so they can
+ *    approve with one tap instead of typing the code (an app may pre-fill the email with login_hint).
+ * 3. They enter the code (or tap the button) and approve what the host may do. Open Media keeps their session inside
  *    the OAuth grant, which the provider stores encrypted; the host only ever sees its own tokens.
  * 4. When the host refreshes its token, the session is refreshed with it, so the person signs in
  *    once. Signing out or revoking the grant ends it.
@@ -14,7 +16,7 @@
  */
 import type { AuthRequest, GrantType, OAuthHelpers, TokenExchangeCallbackOptions, TokenExchangeCallbackResult } from '@cloudflare/workers-oauth-provider';
 
-import { refreshSignIn, requestSignInCode, SignInEnv, SignInError, verifySignInCode } from './personSignIn.js';
+import { refreshSignIn, requestSignInCode, SignInEnv, SignInError, verifySignInCode, verifySignInLink } from './personSignIn.js';
 
 export const ACCOUNT_SCOPE = 'account';
 export const accountMcpPath = '/account/mcp';
@@ -42,7 +44,9 @@ const challengeTtl = 900;
 const cookieName = 'om_account_oauth';
 const attemptLimit = 10;
 
-interface Challenge { oauthRequest: AuthRequest; clientName: string; redirectHost: string; email?: string }
+interface Challenge { oauthRequest: AuthRequest; clientName: string; redirectHost: string; email?: string; hint?: string }
+
+const hintPattern = /^[^\s@<>"']{1,64}@[^\s@<>"']{1,190}\.[^\s@<>"']{2,}$/;
 
 /** /authorize for account connections; answers undefined for anything else so the Events flow runs. */
 export async function handleAccountAuthorization(request: Request, env: AccountOAuthEnv): Promise<Response | undefined> {
@@ -54,9 +58,19 @@ export async function handleAccountAuthorization(request: Request, env: AccountO
     const client = await env.OAUTH_PROVIDER.lookupClient(oauthRequest.clientId);
     if (!client) return page(400, 'Unknown app', '<h1>This app isn’t registered</h1><p>Open Media doesn’t recognise the app asking to connect. Close this page and try again from the app.</p>');
     const id = randomHex(32);
-    const challenge: Challenge = { oauthRequest: { ...oauthRequest, scope: [ACCOUNT_SCOPE] }, clientName: client.clientName?.slice(0, 120) || 'An AI app', redirectHost: hostOf(oauthRequest.redirectUri) };
+    const hint = url.searchParams.get('login_hint')?.trim().toLowerCase();
+    const challenge: Challenge = { oauthRequest: { ...oauthRequest, scope: [ACCOUNT_SCOPE] }, clientName: client.clientName?.slice(0, 120) || 'An AI app', redirectHost: hostOf(oauthRequest.redirectUri), ...(hint && hintPattern.test(hint) ? { hint } : {}) };
     await env.OAUTH_KV.put(`account-challenge:${id}`, JSON.stringify(challenge), { expirationTtl: challengeTtl });
     return page(200, 'Connect to Open Media', emailForm(id, challenge), { 'set-cookie': `${cookieName}=${id}; Path=/authorize; Max-Age=${challengeTtl}; HttpOnly; Secure; SameSite=Lax` });
+  }
+  if (url.pathname === '/authorize/account/link' && request.method === 'GET') {
+    // Only shows a confirm page: link scanners that open emails can't use up the sign-in.
+    const id = String(url.searchParams.get('challenge') ?? '');
+    const cookie = new RegExp(`(?:^|;\\s*)${cookieName}=([0-9a-f]{64})`).exec(request.headers.get('cookie') ?? '')?.[1];
+    const raw = /^[0-9a-f]{64}$/.test(id) ? await env.OAUTH_KV.get(`account-challenge:${id}`) : null;
+    if (!raw) return page(400, 'Expired', '<h1>This sign-in has expired</h1><p>Go back to the app and connect Open Media again.</p>');
+    if (cookie !== id) return page(400, 'Open in the same browser', '<h1>Finish in the window you started from</h1><p>This link only works in the browser where you asked to connect. Go back to that window and type the code from the email instead.</p>');
+    return page(200, 'Connect to Open Media', linkForm(id, JSON.parse(raw) as Challenge, String(url.searchParams.get('token_hash') ?? ''), url.searchParams.get('type') === 'signup' ? 'signup' : 'magiclink'));
   }
   if (request.method !== 'POST' || (url.pathname !== '/authorize/account/email' && url.pathname !== '/authorize/account/complete')) return undefined;
 
@@ -73,7 +87,8 @@ export async function handleAccountAuthorization(request: Request, env: AccountO
 
   if (url.pathname === '/authorize/account/email') {
     try {
-      const sent = await requestSignInCode(env, url.origin, { email: form.get('email') });
+      // The sign-in email's button comes back here (authEmail.ts), so no code needs typing.
+      const sent = await requestSignInCode(env, url.origin, { email: form.get('email') }, fetch, `${url.origin}/authorize/account/link?challenge=${id}`);
       challenge.email = sent.email;
       await env.OAUTH_KV.put(`account-challenge:${id}`, JSON.stringify(challenge), { expirationTtl: challengeTtl });
       return page(200, 'Check your email', codeForm(id, challenge));
@@ -83,12 +98,16 @@ export async function handleAccountAuthorization(request: Request, env: AccountO
   }
 
   if (!challenge.email) return page(400, 'Connect to Open Media', emailForm(id, challenge, 'Enter your email first.'));
+  const tokenHash = form.get('token_hash');
   if (form.get('approve') !== 'yes') return page(400, 'Check your email', codeForm(id, challenge, 'Tick the box to allow this app.'));
   let session: Awaited<ReturnType<typeof verifySignInCode>>;
   try {
-    session = await verifySignInCode(env, url.origin, { email: challenge.email, code: form.get('code') });
+    session = tokenHash
+      ? await verifySignInLink(env, url.origin, { token_hash: tokenHash, type: form.get('type') })
+      : await verifySignInCode(env, url.origin, { email: challenge.email, code: form.get('code') });
+    if (session.user.email && session.user.email.toLowerCase() !== challenge.email.toLowerCase()) throw new SignInError(400, 'bad_request', 'That link was for a different email. Use the code from the newest email instead.');
   } catch (error) {
-    return page(error instanceof SignInError ? error.status : 500, 'Check your email', codeForm(id, challenge, error instanceof SignInError ? error.message : 'Sign-in failed. Try again shortly.'));
+    return page(error instanceof SignInError ? error.status : 500, 'Check your email', codeForm(id, challenge, error instanceof SignInError ? (tokenHash ? `${error.message} You can type the code from the email instead.` : error.message) : 'Sign-in failed. Try again shortly.'));
   }
   const props: AccountGrantProps = { kind: 'account', userId: session.user.id, email: challenge.email, accessToken: session.access_token, refreshToken: session.refresh_token, expiresAt: Date.now() + session.expires_in * 1000, scopes: [ACCOUNT_SCOPE] };
   const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({ request: challenge.oauthRequest, userId: session.user.id, metadata: { clientName: challenge.clientName }, scope: [ACCOUNT_SCOPE], props });
@@ -135,9 +154,9 @@ function emailForm(id: string, challenge: Challenge, error?: string): string {
 <form method="post" action="/authorize/account/email">
   <input type="hidden" name="challenge" value="${id}">
   <label for="email">Your email</label>
-  <input id="email" name="email" type="email" autocomplete="email" inputmode="email" required autofocus placeholder="you@example.com" value="${escapeHtml(challenge.email ?? '')}">
+  <input id="email" name="email" type="email" autocomplete="email" inputmode="email" required autofocus placeholder="you@example.com" value="${escapeHtml(challenge.email ?? challenge.hint ?? '')}">
   ${error ? `<p class="error" role="alert">${escapeHtml(error)}</p>` : ''}
-  <button type="submit">Email me a code</button>
+  <button type="submit">Email me a sign-in link</button>
 </form>
 <p class="fine">New to Open Media? The same code creates your account.</p>`;
 }
@@ -146,7 +165,8 @@ function codeForm(id: string, challenge: Challenge, error?: string): string {
   return `${intro(challenge)}
 <form method="post" action="/authorize/account/complete">
   <input type="hidden" name="challenge" value="${id}">
-  <label for="code">Code sent to ${escapeHtml(challenge.email ?? 'your email')}</label>
+  <p class="lead">We emailed ${escapeHtml(challenge.email ?? 'you')}. Tap the button in that email to finish, or type its code here.</p>
+  <label for="code">Code from the email</label>
   <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,12}" required autofocus placeholder="123456">
   <div class="grants">
     <p><strong>${escapeHtml(challenge.clientName)}</strong> will be able to, as you:</p>
@@ -161,6 +181,27 @@ function codeForm(id: string, challenge: Challenge, error?: string): string {
   <button type="submit">Connect</button>
 </form>
 <p class="fine">You'll return to ${escapeHtml(challenge.redirectHost)}. You can disconnect any time by signing out in the app.</p>`;
+}
+
+function linkForm(id: string, challenge: Challenge, tokenHash: string, type: 'magiclink' | 'signup'): string {
+  return `${intro(challenge)}
+<form method="post" action="/authorize/account/complete">
+  <input type="hidden" name="challenge" value="${id}">
+  <input type="hidden" name="token_hash" value="${escapeHtml(tokenHash)}">
+  <input type="hidden" name="type" value="${type}">
+  <input type="hidden" name="approve" value="yes">
+  <p class="lead">Signed in as ${escapeHtml(challenge.email ?? 'you')}.</p>
+  <div class="grants">
+    <p><strong>${escapeHtml(challenge.clientName)}</strong> will be able to, as you:</p>
+    <ul>
+      <li>Read your Feed, inbox, email, chats and contacts</li>
+      <li>Post, reply, message and change settings, after asking you each time</li>
+      <li>Never see your password or your Open Media session</li>
+    </ul>
+  </div>
+  <button type="submit" autofocus>Allow ${escapeHtml(challenge.clientName)}</button>
+</form>
+<p class="fine">You'll return to ${escapeHtml(challenge.redirectHost)}. You can disconnect any time.</p>`;
 }
 
 function intro(challenge: Challenge): string {
