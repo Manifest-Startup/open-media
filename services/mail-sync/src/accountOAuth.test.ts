@@ -109,7 +109,6 @@ test('one tap: the app pre-fills the email, and the email’s button finishes th
     const otp = new URL(calls[0].url);
     assert.equal(otp.pathname, '/auth/v1/otp');
     assert.equal(otp.searchParams.get('redirect_to'), `https://api.openmedia.site/authorize/account/link?challenge=${id}`, 'the email button comes back to this connection');
-    assert.ok([...kv.keys()].some((key) => key.startsWith('account-email-link:')), 'a fallback for the email hook');
 
     const link = (headers: Record<string, string>) => handleAccountAuthorization(new Request(`https://api.openmedia.site/authorize/account/link?challenge=${id}&token_hash=pkce_abcdefghijklmnop&type=magiclink`, { headers }), env);
     const elsewhere = (await link({}))!;
@@ -126,7 +125,7 @@ test('one tap: the app pre-fills the email, and the email’s button finishes th
     assert.deepEqual(calls.at(-1)!.body, { type: 'magiclink', token_hash: 'pkce_abcdefghijklmnop' });
     assert.equal(completed[0].userId, 'u9');
     assert.equal(completed[0].props.accessToken, 'at');
-    assert.equal([...kv.keys()].filter((key) => key.startsWith('account-challenge:') || key.startsWith('account-email-link:')).length, 0, 'the challenge and its email link are gone');
+    assert.equal([...kv.keys()].filter((key) => key.startsWith('account-challenge:')).length, 0, 'the challenge is gone');
   } finally {
     globalThis.fetch = realFetch;
   }

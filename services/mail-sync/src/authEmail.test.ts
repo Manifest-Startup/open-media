@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHmac, randomBytes } from 'node:crypto';
 import test from 'node:test';
 
-import { authEmailsFor, connectionFromRedirect, emailKey, handleSendEmailHook, pendingConnection, renderAuthEmail, verifyHookSignature } from './authEmail.js';
+import { authEmailsFor, connectionFromRedirect, handleSendEmailHook, renderAuthEmail, verifyHookSignature } from './authEmail.js';
 
 const key = randomBytes(32);
 const secret = `v1,whsec_${key.toString('base64')}`;
@@ -64,9 +64,6 @@ test('a sign-in started on an app’s Connect page gets a button that finishes t
   // Another site's redirect never turns into a connect link.
   assert.equal(connectionFromRedirect(`https://evil.test/authorize/account/link?challenge=${challenge}`, 'https://api.test'), undefined);
   assert.equal(connectionFromRedirect('https://api.test/authorize/account/link?challenge=nope', 'https://api.test'), undefined);
-  // The KV fallback, for when Supabase drops the redirect.
-  const kv = new Map([[`account-email-link:${await emailKey('Ada@example.test')}`, challenge]]);
-  assert.equal(await pendingConnection({ OAUTH_KV: { get: async (key: string) => kv.get(key) ?? null } as never }, 'ada@example.test'), challenge);
   // An ordinary sign-in keeps the normal link.
   assert.ok(authEmailsFor(payload as never, 'https://db.test')[0].text.includes('https://db.test/auth/v1/verify'));
 });

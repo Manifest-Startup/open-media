@@ -12,8 +12,6 @@ export interface AuthEmailEnv {
   SUPABASE_URL: string;
   SEND_EMAIL_HOOK_SECRET?: string;
   AUTH_EMAIL_FROM?: string;
-  /** Pending "Connect an app" sign-ins (accountOAuth.ts): their one-tap link returns to that page. */
-  OAUTH_KV?: Pick<KVNamespace, 'get'>;
   EMAIL?: { send(message: { from: string | { email: string; name: string }; to: string; subject: string; html: string; text: string; headers?: Record<string, string> }): Promise<{ messageId?: string }> };
 }
 
@@ -154,7 +152,8 @@ export async function handleSendEmailHook(request: Request, env: AuthEmailEnv): 
   const from = { email: env.AUTH_EMAIL_FROM ?? 'security@openmedia.site', name: 'Open Media' };
   try {
     const origin = new URL(request.url).origin;
-    const connect = connectionFromRedirect(payload.email_data.redirect_to, origin) ?? await pendingConnection(env, payload.user.email);
+    // Only the redirect of this very sign-in says it came from a Connect page (accountOAuth.ts).
+    const connect = connectionFromRedirect(payload.email_data.redirect_to, origin);
     const connectLink = connect ? (hash: string, type: 'magiclink' | 'signup') => `${origin}/authorize/account/link?challenge=${connect}&token_hash=${encodeURIComponent(hash)}&type=${type}` : undefined;
     for (const email of authEmailsFor(payload, env.SUPABASE_URL, connectLink)) {
       await env.EMAIL.send({ from, to: email.to, subject: email.subject, html: email.html, text: email.text });
@@ -174,16 +173,4 @@ export function connectionFromRedirect(redirectTo: string | undefined, origin: s
     const id = url.searchParams.get('challenge') ?? '';
     return /^[0-9a-f]{64}$/.test(id) ? id : undefined;
   } catch { return undefined; }
-}
-
-/** The pending app connection (challenge id) this email address asked for, if any. */
-export async function pendingConnection(env: Pick<AuthEmailEnv, 'OAUTH_KV'>, email: string): Promise<string | undefined> {
-  if (!env.OAUTH_KV) return undefined;
-  const id = await env.OAUTH_KV.get(`account-email-link:${await emailKey(email)}`);
-  return id && /^[0-9a-f]{64}$/.test(id) ? id : undefined;
-}
-
-export async function emailKey(email: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(email.trim().toLowerCase()));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }

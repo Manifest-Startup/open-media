@@ -16,7 +16,6 @@
  */
 import type { AuthRequest, GrantType, OAuthHelpers, TokenExchangeCallbackOptions, TokenExchangeCallbackResult } from '@cloudflare/workers-oauth-provider';
 
-import { emailKey } from './authEmail.js';
 import { refreshSignIn, requestSignInCode, SignInEnv, SignInError, verifySignInCode, verifySignInLink } from './personSignIn.js';
 
 export const ACCOUNT_SCOPE = 'account';
@@ -88,10 +87,7 @@ export async function handleAccountAuthorization(request: Request, env: AccountO
 
   if (url.pathname === '/authorize/account/email') {
     try {
-      // The sign-in email's button comes back here (authEmail.ts), so no code needs typing. The
-      // redirect carries the challenge; the KV entry is a fallback, written before the email goes.
-      const email = String(form.get('email') ?? '').trim().toLowerCase();
-      if (email) await env.OAUTH_KV.put(`account-email-link:${await emailKey(email)}`, id, { expirationTtl: challengeTtl });
+      // The sign-in email's button comes back here (authEmail.ts), so no code needs typing.
       const sent = await requestSignInCode(env, url.origin, { email: form.get('email') }, fetch, `${url.origin}/authorize/account/link?challenge=${id}`);
       challenge.email = sent.email;
       await env.OAUTH_KV.put(`account-challenge:${id}`, JSON.stringify(challenge), { expirationTtl: challengeTtl });
@@ -116,7 +112,6 @@ export async function handleAccountAuthorization(request: Request, env: AccountO
   const props: AccountGrantProps = { kind: 'account', userId: session.user.id, email: challenge.email, accessToken: session.access_token, refreshToken: session.refresh_token, expiresAt: Date.now() + session.expires_in * 1000, scopes: [ACCOUNT_SCOPE] };
   const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({ request: challenge.oauthRequest, userId: session.user.id, metadata: { clientName: challenge.clientName }, scope: [ACCOUNT_SCOPE], props });
   await env.OAUTH_KV.delete(`account-challenge:${id}`);
-  await env.OAUTH_KV.delete(`account-email-link:${await emailKey(challenge.email)}`);
   return new Response(null, { status: 302, headers: { location: redirectTo, 'cache-control': 'no-store', 'set-cookie': `${cookieName}=; Path=/authorize; Max-Age=0; HttpOnly; Secure; SameSite=Lax` } });
 }
 
