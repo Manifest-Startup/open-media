@@ -123,6 +123,16 @@ export async function handlePublicApiRequest(request: Request, env: PublicApiEnv
       return jsonResponse({ data: formatPost(post, url.origin, env.SUPABASE_URL) }, 30);
     }
 
+    const commentsMatch = path.match(/^\/v1\/posts\/([^/]+)\/comments$/);
+    if (commentsMatch) {
+      const id = decodeURIComponent(commentsMatch[1]);
+      if (!uuidPattern.test(id)) return errorResponse(404, 'not_found', 'Post not found.');
+      const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 50, 1), 200);
+      // The database only returns comments on posts and by people a signed-out reader may see.
+      const comments = await callRpc<unknown[] | null>(env, fetchImpl, 'open_media_post_comments', { p_post_id: id, p_limit: limit });
+      return jsonResponse({ data: comments ?? [] }, 30);
+    }
+
     const profileMatch = path.match(/^\/v1\/profiles\/([^/]+)(\/posts)?$/);
     if (profileMatch) {
       const handle = decodeURIComponent(profileMatch[1]).replace(/^@/, '').toLowerCase();
@@ -433,6 +443,7 @@ export function openApiDocument(origin: string) {
     paths: {
       '/v1/posts': { get: { summary: 'List public posts, newest first', parameters: pageParams, responses: { 200: { description: 'A page of posts', content: { 'application/json': { schema: page } } }, 400: error, 429: error } } },
       '/v1/posts/{id}': { get: { summary: 'Get one public post', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], responses: { 200: { description: 'A post', content: { 'application/json': { schema: { type: 'object', properties: { data: { $ref: '#/components/schemas/Post' } } } } } }, 404: error } } },
+      '/v1/posts/{id}/comments': { get: { summary: 'List the public comments on a post, oldest first', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }, { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200, default: 50 } }], responses: { 200: { description: 'Comments', content: { 'application/json': { schema: { type: 'object', properties: { data: { type: 'array', items: { type: 'object' } } } } } } }, 404: error } } },
       '/v1/profiles/{handle}': { get: { summary: 'Get a public profile', parameters: [{ name: 'handle', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: { description: 'A profile', content: { 'application/json': { schema: { type: 'object', properties: { data: { $ref: '#/components/schemas/Profile' } } } } } }, 404: error } } },
       '/v1/profiles/{handle}/posts': { get: { summary: "List a profile's public posts, newest first", parameters: [{ name: 'handle', in: 'path', required: true, schema: { type: 'string' } }, ...pageParams], responses: { 200: { description: 'A page of posts', content: { 'application/json': { schema: page } } }, 404: error } } },
     },

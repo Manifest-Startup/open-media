@@ -164,3 +164,13 @@ test('routes only public paths to the public API', async () => {
     assert.equal(isPublicApiPath(path), false, path);
   }
 });
+
+test('lists a post’s public comments for signed-out readers, such as Manifest’s clip viewers', async () => {
+  const comment = { id: '1f8fad5b-d9cb-469f-a165-70867728950e', postId, body: 'Great pitch', createdAt: '2026-11-15T10:00:00+00:00', author: { id: profile.id, handle: 'maya', displayName: 'Maya', avatarUrl: null } };
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const response = await handlePublicApiRequest(get(`/v1/posts/${postId}/comments?limit=500`), env, fakeUpstream({ open_media_post_comments: [comment] }, calls));
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json() as { data: unknown[] }).data, [comment]);
+  assert.deepEqual(calls[0].body, { p_post_id: postId, p_limit: 200 });
+  assert.equal((await handlePublicApiRequest(get('/v1/posts/not-a-uuid/comments'), env, fakeUpstream({}))).status, 404);
+});
