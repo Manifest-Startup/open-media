@@ -205,6 +205,7 @@ Everything Open Media does for people, it also offers to programs and AI assista
 | --- | --- | --- |
 | `GET /v1/feed`, `/v1/search`, `/v1/posts`, `/v1/profiles/{handle}`, `/v1/people/{network}/{handle}`, `/v1/events/upcoming`, `/v1/networks`, `/v1/settings`, `/v1/about` | No | Read the mixed feed with “Why this?” reasons, search every open network in plain language, read public posts, profiles and one person's posts across networks, find upcoming events, see exactly what each network supports, find any setting, read the mission |
 | `/v1/me`, `/v1/me/posts`, `/v1/me/conversations`, `/v1/me/contacts`, `/v1/me/identity`, `/v1/me/follows`, `/v1/me/listings`, `/v1/me/payments`, `/v1/me/export` | Your access token | Publish, delete and report posts, offer products and services, pay, tip and unlock (always previewed and confirmed first), read and send messages, manage your private contacts, privacy and follows, export your data |
+| `/v1/connected/me/*` | An app's “Sign in with Open Media” (OAuth) token | The same account routes for web apps you connect, such as Manifest: conversations with the app's context, messages, video upload (`/v1/me/media/videos`), posts and likes, and a Realtime token. Apps can also receive signed webhooks (IDs only) for messages, likes, comments and deletions on their records ([ADR 0041](docs/adrs/0041-app-integrations.md)) |
 | MCP: `/open/mcp`, `/me/mcp` and `/docs/mcp` | No / your access token / no | The same as tools for Claude, ChatGPT and other assistants, plus searchable documentation |
 | WebMCP | No | Every page of the API site and the web app registers read-only tools (search, feed, events, profiles) through `document.modelContext` for agents in the browser |
 | `POST /ask` (NLWeb v0.55) | No | Ask in plain language; answers are schema.org items from the docs and every open network, as JSON or a stream of events |
@@ -243,6 +244,7 @@ Install links for VS Code and Cursor, and the steps for every other client, are 
 - Scripts can still use a token on `/me/mcp`:
   - `open-media login you@example.com`, then `export OPEN_MEDIA_TOKEN=$(open-media token)`;
   - or the `request_sign_in_code` and `sign_in_with_code` tools.
+- Web apps use the same sign-in for REST at `/v1/connected/me/*`. They identify themselves with a Client ID Metadata Document URL as `client_id`, so they need no registration. Their posts and conversations show a small “From …” chip ([ADR 0041](docs/adrs/0041-app-integrations.md)). Manifest is the first; it is built and tested locally but not yet deployed.
 - Every account call acts only as you; the database refuses anything else.
 - See [ADR 0027](docs/adrs/0027-one-agent-plugin-for-every-marketplace.md), [ADR 0012](docs/adrs/0012-agent-interfaces-and-design-system.md) and the [public API guide](services/mail-sync/PUBLIC_API.md).
 

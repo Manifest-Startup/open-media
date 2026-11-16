@@ -17,6 +17,14 @@ This checklist defines “production ready” for the current onboarding private
 - [x] Local browser flow: magic-link onboarding, callback cleanup, profile creation, profile search, direct conversation, send, realtime receive, account export, and responsive layout.
 - [x] Latest signed iOS Store build finished successfully: build 9, EAS `f5916bd3-c316-487a-bbed-f6085bc38fcc`.
 
+## App integrations: Manifest (ADR 0041; built, not deployed)
+
+- [x] Branch `feat/manifest-integration`: `npm run check` and `npm run test:db` pass, and the flow ran against the local stack (context, idempotent send, streamed MP4 upload, publish, like, comment, app feed, deletion, webhook drain).
+- [ ] Owner: apply migrations `20261124120000_app_context.sql` and `20261124130000_app_webhooks.sql`, then deploy the Worker (the migrations first: the app reads `conversations.context`, and falls back when it is missing).
+- [ ] Owner: `npx wrangler secret put APP_WEBHOOKS` with Manifest's URL and a fresh secret shared only with Manifest (`SUPABASE_SECRET_KEY` must already be set).
+- [ ] Hosted Supabase: the project's global upload limit must be at least 100 MB for `POST /v1/me/media/videos` (see the video item below).
+- [ ] Check the "From Manifest" chip on the iOS Simulator and Android, and sign in from Manifest against production once its client metadata document is live at `https://manifeststartup.com/oauth/open-media-client.json`.
+
 ## Chats stop opening after a swipe-close on iPhone (ADR 0040 fix; deployed 2026-11-11)
 
 - [x] Build 23 verified on an iPhone through iPhone Mirroring: closing a chat with Back or a swipe now returns the list fully in place. New bug found there: after a chat was swiped closed, no chat would open. Pushed `f60c597`; deployed from a clean checkout as Worker `convo-mail-sync` version `86f17f58-852f-4ec5-abbd-ca17870e6980` (rollback `fe6c9bab-e9a5-46ab-9ad9-237be98e5467`). Live: openmedia.site serves the clean build's bundle (`index-1ee05330…`), `/v1/posts` 200. TestFlight build 24 (EAS `dbf101a6-e4b1-4cd6-98be-e0504ff34e09`).
