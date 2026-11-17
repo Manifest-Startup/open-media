@@ -1,7 +1,7 @@
-import { OAuthProvider } from '@cloudflare/workers-oauth-provider';
+import { OAuthError, OAuthProvider } from '@cloudflare/workers-oauth-provider';
 
 import { handleAuthorization } from './events/auth.js';
-import { ACCOUNT_SCOPE, accountMcpPath, accountMcpRequest, accountTokenExchange, handleAccountAuthorization, isAccountGrant } from './accountOAuth.js';
+import { ACCOUNT_SCOPE, AccountRefreshError, accountMcpPath, accountMcpRequest, accountTokenExchange, handleAccountAuthorization, isAccountGrant } from './accountOAuth.js';
 import { handleProtectedEventsRequest, handlePublicEventsRequest, runScheduledRefresh, type EventsEnv } from './events/http.js';
 import { SUPPORTED_SCOPES } from './events/tools.js';
 import { AgentAuthError, agentAuthMetadata, exchangeAssertion, jwtBearerGrant } from './agentAuth.js';
@@ -69,7 +69,15 @@ const oauth = new OAuthProvider<WorkerEnv>({
   scopesSupported: [...SUPPORTED_SCOPES, ACCOUNT_SCOPE],
   // RFC 9728 metadata names the scopes agents can ask for. `resource` stays unset so existing grants keep working.
   resourceMetadata: { scopes_supported: [...SUPPORTED_SCOPES, ACCOUNT_SCOPE], bearer_methods_supported: ['header'], resource_name: 'Open Media' },
-  tokenExchangeCallback: (options) => (signInEnv ? accountTokenExchange(options, signInEnv) : undefined),
+  // A thrown non-OAuthError becomes a bare 500, which hosts read as "down" and never as "reconnect".
+  tokenExchangeCallback: async (options) => {
+    if (!signInEnv) return undefined;
+    try { return await accountTokenExchange(options, signInEnv); }
+    catch (error) {
+      if (error instanceof AccountRefreshError) throw new OAuthError(error.code, { description: error.message, statusCode: error.statusCode });
+      throw error;
+    }
+  },
   accessTokenTTL: 60 * 60,
   refreshTokenTTL: 60 * 60 * 24 * 90,
   allowPlainPKCE: false,

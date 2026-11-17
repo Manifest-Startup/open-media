@@ -23,7 +23,7 @@
  */
 import type { AuthRequest, GrantType, OAuthHelpers, TokenExchangeCallbackOptions, TokenExchangeCallbackResult } from '@cloudflare/workers-oauth-provider';
 
-import { refreshSignIn, SignInEnv } from './personSignIn.js';
+import { refreshSignIn, SignInEnv, SignInError } from './personSignIn.js';
 import { meetsPasskeyStep } from './session.js';
 
 export const ACCOUNT_SCOPE = 'account';
@@ -191,6 +191,11 @@ function tokenExpiry(token: string): number {
   return Date.now() + 3_600_000;
 }
 
+/** A refresh the token endpoint must answer with an OAuth error (worker.ts turns it into the provider's OAuthError). */
+export class AccountRefreshError extends Error {
+  constructor(readonly code: 'invalid_grant' | 'temporarily_unavailable', message: string, readonly statusCode: number) { super(message); }
+}
+
 /**
  * Keeps the person's Open Media session in step with the host's token: on every refresh the
  * session is refreshed too (its refresh token rotates), and the host's token never outlives it.
@@ -201,7 +206,15 @@ export async function accountTokenExchange(options: TokenExchangeCallbackOptions
   const ttl = (expiresAt: number) => Math.max(60, Math.min(3600, Math.floor((expiresAt - Date.now()) / 1000) - 120));
   // GrantType is a runtime enum in a Workers-only module, so compare with its value.
   if (options.grantType !== ('refresh_token' as GrantType)) return { accessTokenTTL: ttl(props.expiresAt) };
-  const session = await refreshSignIn(env, 'https://api.openmedia.site', { refresh_token: props.refreshToken }, fetchImpl);
+  let session: Awaited<ReturnType<typeof refreshSignIn>>;
+  try {
+    session = await refreshSignIn(env, 'https://api.openmedia.site', { refresh_token: props.refreshToken }, fetchImpl);
+  } catch (error) {
+    // Supabase no longer accepts the person's session (signed out, revoked or expired): the host
+    // must reconnect. Anything else is a temporary failure the host can retry.
+    if (error instanceof SignInError && error.status < 500 && error.status !== 429) throw new AccountRefreshError('invalid_grant', 'This Open Media sign-in has ended. Connect Open Media again.', 400);
+    throw new AccountRefreshError('temporarily_unavailable', 'Open Media sign-in is unavailable right now. Try again shortly.', 503);
+  }
   const next: AccountGrantProps = { ...props, accessToken: session.access_token, refreshToken: session.refresh_token, expiresAt: Date.now() + session.expires_in * 1000 };
   return { newProps: next, accessTokenTTL: ttl(next.expiresAt) };
 }
