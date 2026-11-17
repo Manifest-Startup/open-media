@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { GrantType } from '@cloudflare/workers-oauth-provider';
 
-import { AccountGrantProps, accountMcpRequest, accountTokenExchange, handleAccountAuthorization, isAccountGrant, wantsAccount } from './accountOAuth.js';
+import { AccountGrantProps, AccountRefreshError, accountMcpRequest, accountTokenExchange, handleAccountAuthorization, isAccountGrant, wantsAccount } from './accountOAuth.js';
 
 const signIn = { SUPABASE_URL: 'https://db.test', SUPABASE_PUBLISHABLE_KEY: 'publishable' };
 const grant: AccountGrantProps = { kind: 'account', userId: 'u1', email: 'ana@example.test', accessToken: 'old-access', refreshToken: 'old-refresh', expiresAt: Date.now() + 3_600_000, scopes: ['account'] };
@@ -172,4 +172,12 @@ test('a changed Client ID Metadata Document is read again when a request no long
   } finally {
     (globalThis as { caches?: unknown }).caches = realCaches;
   }
+});
+
+test('a refresh Supabase rejects asks the host to reconnect; an outage asks it to retry', async () => {
+  const options = { grantType: 'refresh_token' as GrantType, clientId: 'c', userId: 'u1', grantId: 'g', scope: ['account'], requestedScope: ['account'], props: grant };
+  const rejected = (async () => Response.json({ error: 'invalid_grant', error_description: 'Invalid Refresh Token: Refresh Token Not Found' }, { status: 400 })) as typeof fetch;
+  await assert.rejects(accountTokenExchange(options, signIn, rejected), (error: unknown) => error instanceof AccountRefreshError && error.code === 'invalid_grant' && error.statusCode === 400);
+  const down = (async () => new Response('bad gateway', { status: 502 })) as typeof fetch;
+  await assert.rejects(accountTokenExchange(options, signIn, down), (error: unknown) => error instanceof AccountRefreshError && error.code === 'temporarily_unavailable' && error.statusCode === 503);
 });
