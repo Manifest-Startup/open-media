@@ -56,7 +56,7 @@ Scripts and CI can use a token instead: `https://api.openmedia.site/me/mcp` with
 <!-- generated:plugin-contents (npm run agent-plugin:sync) -->
 - **3 MCP servers:**
   - `open-media` (public: 24 tools)
-  - `open-media-account` (your account: 113 more, 137 in all)
+  - `open-media-account` (your account: 117 more, 141 in all)
   - `open-media-docs`
 - **11 skills** that teach an agent to use Open Media well, safely:
   - `open-media`

@@ -18,6 +18,7 @@ Base: `https://api.openmedia.site` (local: the URL `npm run local` prints for th
 - `GET  /v1/connected/me/conversations/{id}/messages?limit=&before=` → `{messages:[{id, conversation_id, sender_id, body, created_at, reply_to_message_id|null}]}` newest-last.
 - `POST /v1/connected/me/conversations/{id}/messages` `{body, client_id?}` (header `Idempotency-Key` also accepted) → 201 `{message:{…}}`.
 - `POST /v1/connected/me/conversations/{id}/read` → 200.
+- One inbox (ADR 0044): `GET /v1/connected/me/inbox?limit=` → `{conversations:[{id, kind:chat|email|bridged, source, title, initials, avatar_color, avatar_urls, group, company, preview, last_message_at, unread_count, context, can_reply}]}` newest first; `GET /v1/connected/me/inbox/{id}` → `{conversation, items:[{kind:'time', at} | {kind:'message', id, direction, sender_name, sent_at, source, subject, body:[{text,url?}], plain, attachments, reply_to_message_id, group_start, group_end}]}`; `POST /v1/connected/me/inbox/{id}/messages` `{body, reply_to_message_id?, client_id?}` → 201 (chat message or threaded email); `POST /v1/connected/me/inbox/{id}/read` → 200. Built from the app's own `src/domain` code.
 - `POST /v1/connected/me/realtime-token` → `{supabase_url, anon_key, access_token, expires_at}` — the person's own short-lived Supabase access token so a browser can subscribe to Realtime `postgres_changes` on `messages` (RLS-limited).
 
 ## 3. Video clips

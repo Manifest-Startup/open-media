@@ -55,6 +55,9 @@ import { RecoveryError, useRecoveryCode } from './recoveryCodes.js';
 import type { OAuthHelpers } from '@cloudflare/workers-oauth-provider';
 import { connectedCaller, IntegrationError, realtimeToken, storeUploadedVideo } from './appIntegrations.js';
 import { AppContext, isAppId, parseAppContext } from '../../../src/domain/appContext';
+import type { BridgeSnapshot } from '../../../src/domain/bridgedChats';
+import { emailReply, storedMailFromRows, unreadMailIn } from '../../../src/domain/emailNormalization';
+import { assembleInbox, inboxSummary, inboxThread, NativeConversation, nativeMessage } from './inbox.js';
 import { isStoredPostVideo, maxVideoBytes } from '../../../src/domain/postVideo';
 import { confirmEvidence, MarketplaceEnv, MarketplaceError, marketplaceConfigured, readEvidence, serviceRpc } from './marketplace.js';
 import { verifyWebBotAuth } from './webBotAuth.js';
@@ -1382,6 +1385,71 @@ export class Account {
     };
   }
 
+  // ─── One inbox (ADR 0044): chats, bridged chats and email as the app shows them ──────────
+
+  private async inboxSources() {
+    const [native, mailRows, unseenRows, bridged] = await Promise.all([
+      this.conversations(20).then((result) => (result as { conversations?: NativeConversation[] }).conversations ?? []),
+      this.rpc<Record<string, unknown>[]>('open_media_list_mail_messages', { p_limit: 500 }).then((rows) => rows ?? []),
+      // Read state (ADR 0026); without it, all mail counts as read.
+      this.rpc<{ account_id: string; source_message_id: string }[]>('open_media_unseen_mail', {}).then((rows) => rows ?? [], () => []),
+      // Bridged chats only where the bridges are set up.
+      this.internal ? this.call<BridgeSnapshot>('GET', '/v1/bridges/conversations').catch(() => undefined) : Promise.resolve(undefined),
+    ]);
+    return { entries: assembleInbox({ me: this.userId, native, mailRows, unseenRows, bridged }), mailRows, unseenRows };
+  }
+
+  private async inboxEntry(id: string) {
+    if (typeof id !== 'string' || !id || id.length > 400) throw new AgentError(404, 'not_found', 'Conversation not found.');
+    const sources = await this.inboxSources();
+    const entry = sources.entries.find((item) => item.conversation.id === id);
+    if (!entry) throw new AgentError(404, 'not_found', 'Conversation not found.');
+    return { ...sources, entry };
+  }
+
+  /** Every conversation, newest first: Open Media chats, bridged chats and email. */
+  async inbox(limit = 100) {
+    const count = Number.isInteger(limit) ? Math.min(200, Math.max(1, limit)) : 100;
+    const { entries } = await this.inboxSources();
+    return { conversations: entries.slice(0, count).map(inboxSummary) };
+  }
+
+  /** One conversation laid out for reading, with email bodies as readable text. */
+  async inboxConversation(id: string) {
+    const { entry } = await this.inboxEntry(id);
+    if (entry.kind !== 'chat') return inboxThread(entry);
+    const { messages } = await this.messages(id, { limit: 200 });
+    return inboxThread(entry, messages.map((row) => nativeMessage(row, this.userId)));
+  }
+
+  /** Reply in a conversation: a message for chats, an email (to the right people, threaded) for email. */
+  async inboxReply(id: string, body: unknown, replyToMessageId?: unknown, clientId?: unknown) {
+    const text = typeof body === 'string' ? body.trim() : '';
+    if (!text) throw new AgentError(400, 'bad_request', 'Write a message first.');
+    const { entry } = await this.inboxEntry(id);
+    const replyTo = typeof replyToMessageId === 'string' ? entry.conversation.messages.find((message) => message.id === replyToMessageId) : undefined;
+    if (entry.kind === 'chat') return { kind: entry.kind, ...(await this.send(id, text, clientId, replyToMessageId)) };
+    if (entry.kind === 'bridged') return { kind: entry.kind, ...(await this.sendBridged(id, text) as object) };
+    if (!entry.conversation.email) throw new AgentError(409, 'refused', 'This email can’t be answered from here.');
+    if (text.length > 50000) throw new AgentError(400, 'bad_request', 'Emails can be up to 50,000 characters.');
+    const reply = emailReply(entry.conversation.email, text, replyTo);
+    return { kind: entry.kind, ...(await this.sendEmail(reply.accountId, reply.mail) as object) };
+  }
+
+  /** Mark a conversation read, in every place it came from. */
+  async inboxRead(id: string) {
+    const { entry, mailRows, unseenRows } = await this.inboxEntry(id);
+    if (entry.kind === 'chat') return { kind: entry.kind, ...(await this.markRead(id)) };
+    if (entry.kind === 'bridged') {
+      const latest = [...entry.conversation.messages].reverse().find((message) => message.direction === 'inbound');
+      if (latest) await this.call('POST', `/v1/bridges/rooms/${encodeURIComponent(id)}/read`, { eventId: latest.sourceMessageId });
+      return { kind: entry.kind, read: true };
+    }
+    const unread = unreadMailIn(entry.conversation, storedMailFromRows(mailRows, unseenRows));
+    for (const [accountId, messageIds] of unread) await this.markEmailSeen(accountId, messageIds.slice(0, 100), false);
+    return { kind: entry.kind, read: true };
+  }
+
   mailAccounts() { return this.call('GET', '/v1/mail-accounts'); }
   connectMail(input: unknown) { return this.call('POST', '/v1/mail-accounts', input); }
   syncMail(id: string) { return this.call('POST', `/v1/mail-accounts/${encodeURIComponent(id)}/sync`, {}); }
@@ -1803,6 +1871,10 @@ function registerAccountTools(server: McpServer, account: Account) {
   tool(server, 'remove_follower', { title: 'Remove a follower', description: 'Remove someone from the person’s followers. They are not told.', input: { followerId: z.string() }, readOnly: false }, (args) => account.removeFollower(String(args.followerId)));
 
   // Email
+  tool(server, 'list_inbox', { title: 'My inbox', description: 'The person’s whole inbox, newest first: Open Media chats, bridged chats and email (one conversation per person or company), as the app shows it.', input: { limit: z.number().int().min(1).max(200).optional() }, readOnly: true }, (args) => account.inbox(Number(args.limit ?? 100)));
+  tool(server, 'open_inbox_conversation', { title: 'Open an inbox conversation', description: 'Read one conversation from list_inbox, laid out for reading, with email as clean text.', input: { conversationId: z.string() }, readOnly: true }, (args) => account.inboxConversation(String(args.conversationId)));
+  tool(server, 'reply_in_inbox', { title: 'Reply in the inbox', description: 'Reply in a conversation from list_inbox: a message in a chat, or an email to the right people, threaded. Confirm the exact text with the person first.', input: { conversationId: z.string(), text: z.string().min(1).max(50000), replyTo: z.string().optional().describe('Reply to this message id (from open_inbox_conversation).'), clientId: z.string().optional() }, readOnly: false }, (args) => account.inboxReply(String(args.conversationId), args.text, args.replyTo, args.clientId));
+  tool(server, 'mark_inbox_read', { title: 'Mark an inbox conversation read', description: 'Mark a conversation from list_inbox read everywhere it came from, as opening it does.', input: { conversationId: z.string() }, readOnly: false }, (args) => account.inboxRead(String(args.conversationId)));
   tool(server, 'list_email', { title: 'Read my email', description: 'The person’s stored email from connected mailboxes (inbound and sent), newest first. Run sync_mailbox first for the latest.', input: { limit: z.number().int().min(1).max(500).optional() }, readOnly: true }, (args) => account.email(Number(args.limit ?? 50)));
   tool(server, 'list_mailboxes', { title: 'My mailboxes', description: 'Connected email accounts and whether each can send.', input: {}, readOnly: true }, () => account.mailAccounts());
   tool(server, 'connect_mailbox', { title: 'Connect a mailbox', description: 'Connect an IMAP or POP3 mailbox (with optional SMTP for sending). Use an app password, never the main password. The server tests the connection and stores the password encrypted.', input: {
@@ -2107,6 +2179,10 @@ function baseOpenApi(origin: string) {
         post: { summary: 'Send a message. The same client_id (or Idempotency-Key) makes a retry land once.', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['body'], properties: { body: { type: 'string', maxLength: 8000 }, client_id: { type: 'string', format: 'uuid' } } } } } }, responses: { 201: ok('Sent', { type: 'object', properties: { sent: { type: 'boolean' }, conversationId: { type: 'string' }, message: { $ref: '#/components/schemas/Message' } } }), 400: error, 401: error, 403: error, 409: error } },
       },
       '/v1/me/export': { get: { summary: 'Export a readable copy of your data', security: bearer, responses: { 200: ok('Your data'), 401: error } } },
+      '/v1/me/inbox': { get: { summary: 'Your whole inbox, newest first: Open Media chats, bridged chats and email (one conversation per person or company), as the app shows it (ADR 0044)', security: bearer, parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200, default: 100 } }], responses: { 200: ok('{ conversations: [{ id, kind: chat|email|bridged, source, title, initials, avatar_color, avatar_urls, group, company, preview, last_message_at, unread_count, context, can_reply }] }'), 401: error } } },
+      '/v1/me/inbox/{id}': { get: { summary: 'One inbox conversation laid out for reading: time breaks, runs, subjects when they change, and email bodies as clean text with links', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: ok('{ conversation, items: [{ kind: time, at } | { kind: message, id, direction, sender_name, sent_at, source, subject, body: [{ text, url? }], plain, attachments, reply_to_message_id, group_start, group_end }] }'), 401: error, 404: error } } },
+      '/v1/me/inbox/{id}/messages': { post: { summary: 'Reply in an inbox conversation: a message in a chat, or an email to the right people (reply all in a group), threaded, from the mailbox that received it', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['body'], properties: { body: { type: 'string', maxLength: 50000 }, reply_to_message_id: { type: 'string' }, client_id: { type: 'string', format: 'uuid' } } } } } }, responses: { 201: ok('Sent'), 400: error, 401: error, 404: error, 409: error } } },
+      '/v1/me/inbox/{id}/read': { post: { summary: 'Mark an inbox conversation read everywhere it came from (chat receipts, mailbox read state)', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: ok('Read'), 401: error, 404: error } } },
       '/v1/me/email': { get: { summary: 'Your stored email, newest first', security: bearer, parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 500, default: 50 } }], responses: { 200: ok('Email'), 401: error } } },
       '/v1/me/contacts': {
         get: { summary: 'Your contacts (private; stored encrypted)', security: bearer, responses: { 200: ok('Your contact cards'), 401: error } },
@@ -2494,6 +2570,11 @@ export async function handleAgentRequest(request: Request, env: AgentEnv, intern
     if (request.method === 'POST' && messageMatch) return json(await account.send(decodeURIComponent(messageMatch[1]), body.body ?? body.text, idempotencyKey ?? body.client_id ?? body.clientId), 0, 201);
     if (request.method === 'GET' && path === '/v1/me/export') return json(await account.exportData(), 0);
     if (request.method === 'GET' && path === '/v1/me/email') return json(await account.email(Number(url.searchParams.get('limit') ?? 50)), 0);
+    if (request.method === 'GET' && path === '/v1/me/inbox') return json(await account.inbox(Number(url.searchParams.get('limit') ?? 100)), 0);
+    const inboxMatch = path.match(/^\/v1\/me\/inbox\/([^/]+)(?:\/(messages|read))?$/);
+    if (inboxMatch && request.method === 'GET' && !inboxMatch[2]) return json(await account.inboxConversation(decodeURIComponent(inboxMatch[1])), 0);
+    if (inboxMatch && request.method === 'POST' && inboxMatch[2] === 'messages') return json(await account.inboxReply(decodeURIComponent(inboxMatch[1]), body.body ?? body.text, body.reply_to_message_id ?? body.replyToMessageId, idempotencyKey ?? body.client_id ?? body.clientId), 0, 201);
+    if (inboxMatch && request.method === 'POST' && inboxMatch[2] === 'read') return json(await account.inboxRead(decodeURIComponent(inboxMatch[1])), 0);
     if (request.method === 'POST' && path === '/v1/me/blocks') return json(await account.block(body.handle, body.blocked), 0);
     const interaction = path.match(/^\/v1\/me\/posts\/([^/]+)\/(like|reshare|comments)$/);
     if (interaction && request.method === 'GET' && interaction[2] === 'comments') return json(await account.postComments(decodeURIComponent(interaction[1])), 0);

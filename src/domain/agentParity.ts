@@ -99,6 +99,7 @@ export const appCapabilities: AppCapability[] = [
 
   // Messages
   can('messages', 'Conversations: list, open, read and send', ['GET /v1/me/conversations', 'POST /v1/me/conversations', 'GET /v1/me/conversations/{id}/messages', 'POST /v1/me/conversations/{id}/messages', 'openMediaService.loadOpenMediaConversations', 'openMediaService.startDirectConversation', 'openMediaService.sendOpenMediaMessage', 'openMediaService.createClientId'], ['list_conversations', 'start_conversation', 'get_conversation_messages', 'send_message']),
+  can('messages', 'One inbox: chats and email together, read, reply and mark read (ADR 0044)', ['GET /v1/me/inbox', 'GET /v1/me/inbox/{id}', 'POST /v1/me/inbox/{id}/messages', 'POST /v1/me/inbox/{id}/read'], ['list_inbox', 'open_inbox_conversation', 'reply_in_inbox', 'mark_inbox_read']),
   can('messages', 'Reply to a message and react with an emoji', ['openMediaService.setMessageReaction'], ['send_message', 'react_to_message']),
   can('messages', 'Mark a conversation read or unread', ['POST /v1/me/conversations/{id}/read', 'openMediaService.markConversationRead', 'openMediaService.markConversationUnread'], ['mark_conversation_read', 'mark_conversation_unread']),
   can('messages', 'Read receipts', ['PUT /v1/me/settings/read-receipts', 'openMediaService.loadShareReadReceipts', 'openMediaService.setShareReadReceipts'], ['set_read_receipts']),
