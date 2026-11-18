@@ -711,14 +711,15 @@ export class Account {
   }
 
   /** Sends a message. The same client id (or Idempotency-Key) makes a retry land once. */
-  async send(conversationId: string, body: unknown, clientIdInput?: unknown) {
+  async send(conversationId: string, body: unknown, clientIdInput?: unknown, replyToInput?: unknown) {
     if (!uuid.test(conversationId)) throw new AgentError(404, 'not_found', 'Conversation not found.');
     const text = typeof body === 'string' ? body.trim() : '';
     if (!text) throw new AgentError(400, 'bad_request', 'Write a message first.');
     if (text.length > 8000) throw new AgentError(400, 'bad_request', 'Messages can be up to 8,000 characters.');
     if (clientIdInput !== undefined && clientIdInput !== null && (typeof clientIdInput !== 'string' || !uuid.test(clientIdInput))) throw new AgentError(400, 'bad_request', 'client_id must be a UUID.');
+    if (replyToInput !== undefined && replyToInput !== null && (typeof replyToInput !== 'string' || !uuid.test(replyToInput))) throw new AgentError(400, 'bad_request', 'replyTo must be the id of a message in this conversation.');
     const clientId = typeof clientIdInput === 'string' ? clientIdInput.toLowerCase() : crypto.randomUUID();
-    const [created] = await this.rest<MessageRow[]>('POST', `/rest/v1/messages?on_conflict=sender_id,client_id&select=${messageColumns}`, { conversation_id: conversationId, sender_id: this.userId, client_id: clientId, body: text, transport: 'open_media' }, 'return=representation,resolution=ignore-duplicates');
+    const [created] = await this.rest<MessageRow[]>('POST', `/rest/v1/messages?on_conflict=sender_id,client_id&select=${messageColumns}`, { conversation_id: conversationId, sender_id: this.userId, client_id: clientId, body: text, transport: 'open_media', ...(typeof replyToInput === 'string' ? { reply_to_message_id: replyToInput.toLowerCase() } : {}) }, 'return=representation,resolution=ignore-duplicates');
     const row = created ?? (await this.rest<MessageRow[]>('GET', `/rest/v1/messages?sender_id=eq.${this.userId}&client_id=eq.${clientId}&select=${messageColumns}`))[0];
     if (row && row.conversation_id !== conversationId) throw new AgentError(409, 'conflict', 'That client_id was already used for a message in another conversation.');
     return { sent: true, conversationId, message: row ? messageView(row) : null };
@@ -1448,6 +1449,105 @@ export class Account {
     return result as T;
   }
 
+  // ─── App parity (the app's own screens, now reachable by agents too) ───────────
+
+  /** Edit profile → name and bio, as the app's Edit profile screen saves them (pictures are chosen in the app). */
+  async editProfile(input: { displayName?: unknown; bio?: unknown }) {
+    const patch: Record<string, string> = {};
+    if (input.displayName !== undefined) {
+      const name = typeof input.displayName === 'string' ? input.displayName.trim() : '';
+      if (!name || name.length > 80) throw new AgentError(400, 'bad_request', 'Enter a name of up to 80 characters.');
+      patch.display_name = name;
+    }
+    if (input.bio !== undefined) {
+      const bio = typeof input.bio === 'string' ? input.bio.trim() : '';
+      if (bio.length > 240) throw new AgentError(400, 'bad_request', 'Keep the bio under 240 characters.');
+      patch.bio = bio;
+    }
+    if (!Object.keys(patch).length) throw new AgentError(400, 'bad_request', 'Give a new displayName, bio or both.');
+    const [row] = await this.rest<{ handle: string; display_name: string; bio: string | null }[]>('PATCH', `/rest/v1/profiles?id=eq.${this.userId}&select=handle,display_name,bio`, { ...patch, updated_at: new Date().toISOString() }, 'return=representation');
+    if (!row) throw new AgentError(404, 'no_profile', 'Set up a profile first with set_up_profile.');
+    return { handle: `@${row.handle}`, displayName: row.display_name, bio: row.bio ?? '' };
+  }
+
+  /** A message reaction, as long-pressing a message does. `null` removes the person's reaction. */
+  async reactToMessage(messageId: string, emoji: unknown) {
+    if (!uuid.test(messageId)) throw new AgentError(404, 'not_found', 'Message not found.');
+    const value = emoji === null || emoji === undefined || emoji === '' ? null : typeof emoji === 'string' && [...emoji].length <= 8 && emoji.trim().length > 0 ? emoji.trim() : undefined;
+    if (value === undefined) throw new AgentError(400, 'bad_request', 'Send one emoji, or null to remove your reaction.');
+    const reaction = await this.rpc<string | null>('open_media_set_reaction', { p_message_id: messageId, p_emoji: value });
+    return { messageId, reaction: reaction ?? null };
+  }
+
+  /** New message → search people: handles and the names people chose to show, without anyone the person blocked. */
+  async findPeople(query: unknown) {
+    const clean = typeof query === 'string' ? query.trim().replace(/^@/, '').slice(0, 40) : '';
+    if (clean.length < 2) throw new AgentError(400, 'bad_request', 'Search with at least two characters of a name or handle.');
+    return { people: (await this.rpc<unknown[] | null>('open_media_search_profiles', { p_query: clean })) ?? [] };
+  }
+
+  /** Swipe → Mark unread. */
+  async markUnread(conversationId: string) {
+    if (!uuid.test(conversationId)) throw new AgentError(404, 'not_found', 'Conversation not found.');
+    await this.rpc('open_media_mark_unread', { p_conversation_id: conversationId });
+    return { conversationId, unread: true };
+  }
+
+  /** The topics the person told Relevant to favour (Settings → Feed algorithm → Interests). */
+  async feedInterests() {
+    const rows = await this.rpc<string[] | null>('open_media_my_feed_interests', {});
+    return { interests: Array.isArray(rows) ? rows.filter((item) => typeof item === 'string') : [] };
+  }
+
+  async setFeedInterests(interests: unknown) {
+    const list = Array.isArray(interests) ? interests.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean) : undefined;
+    if (!list || list.length > 50 || list.some((item) => item.length > 60)) throw new AgentError(400, 'bad_request', 'Send up to 50 topics of up to 60 characters each.');
+    const rows = await this.rpc<string[] | null>('open_media_set_feed_interests', { p_interests: list });
+    return { interests: Array.isArray(rows) ? rows : list };
+  }
+
+  /** Likes, reshares and comments on web-feed items (RSS, Atom, JSON Feed cards), keyed by the item's link. */
+  private webItemUrl(url: unknown): string {
+    if (typeof url !== 'string' || url.length > 2048 || !/^https:\/\//i.test(url)) throw new AgentError(400, 'bad_request', 'Give the item’s https link, as get_web_feed_items returns it.');
+    return url;
+  }
+
+  async likeWebItem(url: unknown, liked: unknown) {
+    const link = this.webItemUrl(url);
+    return { url: link, liked: liked !== false, result: await this.rpc('open_media_set_web_item_like', { p_url: link, p_liked: liked !== false }) };
+  }
+
+  async reshareWebItem(url: unknown, reshared: unknown) {
+    const link = this.webItemUrl(url);
+    return { url: link, reshared: reshared !== false, result: await this.rpc('open_media_set_web_item_reshare', { p_url: link, p_reshared: reshared !== false }) };
+  }
+
+  async commentOnWebItem(url: unknown, body: unknown, clientIdInput?: unknown) {
+    const link = this.webItemUrl(url);
+    const text = typeof body === 'string' ? body.trim() : '';
+    if (!text || text.length > 2000) throw new AgentError(400, 'bad_request', 'Write a comment of up to 2,000 characters.');
+    if (clientIdInput !== undefined && clientIdInput !== null && (typeof clientIdInput !== 'string' || !uuid.test(clientIdInput))) throw new AgentError(400, 'bad_request', 'clientId must be a UUID.');
+    const clientId = typeof clientIdInput === 'string' ? clientIdInput.toLowerCase() : crypto.randomUUID();
+    return { url: link, comment: await this.rpc('open_media_add_web_item_comment', { p_url: link, p_client_id: clientId, p_body: text }) };
+  }
+
+  async webItemComments(url: unknown) {
+    const link = this.webItemUrl(url);
+    return { url: link, comments: (await this.rpc<unknown[] | null>('open_media_web_item_comments', { p_url: link, p_limit: 100 })) ?? [] };
+  }
+
+  /** Swipe an email conversation read or unread; the mailbox server is told too when it is IMAP. */
+  markEmailSeen(mailboxId: string, messageIds: unknown, unseen: unknown) { return this.call('POST', `/v1/mail-accounts/${encodeURIComponent(mailboxId)}/seen`, { messageIds, unseen: unseen === true }); }
+
+  /** A bridged chat read (up to an event, sending a receipt only if the person shares them) or marked unread. */
+  setBridgedChatRead(roomId: string, read: unknown, eventId?: unknown) {
+    return read === false
+      ? this.call('POST', `/v1/bridges/rooms/${encodeURIComponent(roomId)}/unread`, {})
+      : this.call('POST', `/v1/bridges/rooms/${encodeURIComponent(roomId)}/read`, { eventId });
+  }
+
+  cancelChatSignIn(network: string, loginId: unknown) { return this.call('POST', `/v1/bridges/${encodeURIComponent(network)}/login/cancel`, { loginId }); }
+
   private rpc<T = unknown>(name: string, args: Record<string, unknown>): Promise<T> {
     return this.rest<T>('POST', `/rest/v1/rpc/${name}`, args);
   }
@@ -1543,7 +1643,7 @@ function tool(server: McpServer, name: string, config: { title: string; descript
     title: config.title,
     description: config.description,
     inputSchema: z.object(config.input),
-    annotations: { readOnlyHint: config.readOnly, openWorldHint: true, destructiveHint: !config.readOnly && /^(delete|remove)_/.test(name) },
+    annotations: { readOnlyHint: config.readOnly, openWorldHint: true, destructiveHint: !config.readOnly && /^(delete|remove|clear)_/.test(name) },
     ...(config.view ? { _meta: { ui: { resourceUri: config.view }, 'openai/outputTemplate': config.view } } : {}),
   }, (async (args: Record<string, unknown>) => {
     try { return result(await run(args ?? {}), Boolean(config.view)); } catch (error) { return failure(error); }
@@ -1572,6 +1672,7 @@ function registerPublicTools(server: McpServer, env: AgentEnv, origin: string) {
     (args) => search(env, origin, String(args.query)));
   tool(server, 'get_post', { title: 'Get a post', description: 'One public Open Media post by id.', input: { id: z.string() }, readOnly: true }, (args) => publicPost(env, origin, String(args.id)));
   tool(server, 'get_profile', { title: 'Get a profile', description: 'A public Open Media profile by handle, with recent posts.', input: { handle: z.string() }, readOnly: true, view: appViewUri }, (args) => publicProfile(env, origin, String(args.handle)));
+  tool(server, 'get_resume', { title: 'Get someone’s resume', description: 'A person’s public professional profile as a JSON Resume document (only the fields they show to everyone), as their openmedia.site/@handle/resume page shows it.', input: { handle: z.string() }, readOnly: true }, async (args) => (await publicResume(env, origin, String(args.handle), 'json')).json());
   tool(server, 'get_person_timeline', { title: 'Get a person’s timeline', description: 'One person’s public posts in one timeline. For an Open Media handle: their profile plus posts from the Farcaster, Lens, Hive and DeSo accounts they listed (declared by them, not proven). For an open-network handle: that account’s own posts.', input: { network: z.enum(['open-media', ...authorNetworks] as [string, ...string[]]), handle: z.string(), cursor: z.string().optional() }, readOnly: true, view: appViewUri },
     (args) => personTimeline(env, origin, String(args.network), String(args.handle), args.cursor as string | undefined));
   tool(server, 'find_upcoming_events', { title: 'Find upcoming events', description: 'Upcoming public events from Luma, Meetup and Eventbrite in the San Francisco Bay Area (the only area covered so far), with the same event on several platforms shown once. Each has its date, place, price, organizer and the official registration link. Never claim the person is registered; they register on that page.', input: { area: z.string().optional().describe('south bay, peninsula, san francisco, east bay or bay area (default)'), days: z.number().int().min(1).max(14).optional(), query: z.string().max(120).optional().describe('Topic words, e.g. "ai founders" or "hiking"'), limit: z.number().int().min(1).max(50).optional() }, readOnly: true, view: appViewUri },
@@ -1601,7 +1702,7 @@ function registerAccountTools(server: McpServer, account: Account) {
   tool(server, 'get_post_comments', { title: 'Read a post’s comments', description: 'The comments on an Open Media post, oldest first.', input: { postId: z.string() }, readOnly: true }, (args) => account.postComments(String(args.postId)));
   tool(server, 'list_conversations', { title: 'My conversations', description: 'The person’s Open Media conversations with recent messages, newest first.', input: { messagesPerConversation: z.number().int().min(1).max(50).optional() }, readOnly: true, view: appViewUri }, (args) => account.conversations(Number(args.messagesPerConversation ?? 20)));
   tool(server, 'start_conversation', { title: 'Start a conversation', description: 'Open a direct conversation with someone by their Open Media handle.', input: { handle: z.string() }, readOnly: false }, (args) => account.startConversation(args.handle));
-  tool(server, 'send_message', { title: 'Send a message', description: 'Send a message in one of the person’s conversations. Confirm the exact text with the person first.', input: { conversationId: z.string(), text: z.string().min(1).max(8000) }, readOnly: false }, (args) => account.send(String(args.conversationId), args.text));
+  tool(server, 'send_message', { title: 'Send a message', description: 'Send a message in one of the person’s conversations. Confirm the exact text with the person first.', input: { conversationId: z.string(), text: z.string().min(1).max(8000), replyTo: z.string().optional().describe('Reply to this message id (from get_conversation_messages).'), clientId: z.string().optional().describe('A UUID; pass the same one when retrying so the message is sent once.') }, readOnly: false }, (args) => account.send(String(args.conversationId), args.text, args.clientId, args.replyTo));
   tool(server, 'mark_conversation_read', { title: 'Mark a conversation read', description: 'Mark one of the person’s conversations as read, as opening it does. The other person sees “Read” only if both of them share read receipts.', input: { conversationId: z.string() }, readOnly: false }, (args) => account.markRead(String(args.conversationId)));
   tool(server, 'set_read_receipts', { title: 'Share or hide read receipts', description: 'Turn the person’s read receipts on or off. They are reciprocal: with them off, the person also stops seeing when others read. Delivery is always shown. Confirm with the person first.', input: { share: z.boolean() }, readOnly: false }, (args) => account.setReadReceipts(args.share));
   tool(server, 'export_my_data', { title: 'Export my data', description: 'A readable copy of the person’s Open Media data.', input: {}, readOnly: true }, () => account.exportData());
@@ -1722,6 +1823,27 @@ function registerAccountTools(server: McpServer, account: Account) {
 
   // Cross-posting
   tool(server, 'cross_posting_status', { title: 'Cross-posting', description: 'Which networks this server can help cross-post to, and how cross-posting works (it is signed on the person’s device, so posts made through this API go to Open Media only).', input: {}, readOnly: true }, () => account.crossPosting());
+  // App parity: what the app's screens do, for agents too (the parity guard is agentParity.test.ts).
+  tool(server, 'edit_profile', { title: 'Edit my name and bio', description: 'Change the person’s display name and/or bio, as Edit profile in the app does. Their @handle does not change, and a profile picture is chosen in the app. Public: confirm the exact new text with the person first.', input: { displayName: z.string().min(1).max(80).optional(), bio: z.string().max(240).optional() }, readOnly: false }, (args) => account.editProfile(args));
+  tool(server, 'get_conversation_messages', { title: 'Read a conversation', description: 'Messages in one of the person’s Open Media conversations, oldest first, with each message’s id (for replies and reactions). Page back with before (a message id or an ISO time).', input: { conversationId: z.string(), limit: z.number().int().min(1).max(200).optional(), before: z.string().optional() }, readOnly: true }, (args) => account.messages(String(args.conversationId), { limit: args.limit, before: args.before }));
+  tool(server, 'find_people', { title: 'Find people on Open Media', description: 'Search Open Media people by handle or by the name they chose to show, as the app’s new-message search does. Up to 20 results; people the person blocked are left out.', input: { query: z.string().min(2).max(40) }, readOnly: true }, (args) => account.findPeople(args.query));
+  tool(server, 'react_to_message', { title: 'React to a message', description: 'Add one emoji reaction to a message in the person’s conversation, or with emoji null remove theirs. The other person sees it: confirm with the person first.', input: { messageId: z.string(), emoji: z.string().min(1).max(16).nullable() }, readOnly: false }, (args) => account.reactToMessage(String(args.messageId), args.emoji));
+  tool(server, 'mark_conversation_unread', { title: 'Mark a conversation unread', description: 'Mark one of the person’s conversations unread, as swiping it does, so it stands out until they open it. Only the person sees this.', input: { conversationId: z.string() }, readOnly: false }, (args) => account.markUnread(String(args.conversationId)));
+  tool(server, 'get_feed_interests', { title: 'My feed interests', description: 'The topics the person told their Relevant feed to favour (Settings → Feed algorithm → Interests).', input: {}, readOnly: true }, () => account.feedInterests());
+  tool(server, 'set_feed_interests', { title: 'Set my feed interests', description: 'Replace the topics the person’s Relevant feed favours. Private to the person; confirm the list with them first.', input: { interests: z.array(z.string().min(1).max(60)).max(50) }, readOnly: false }, (args) => account.setFeedInterests(args.interests));
+  tool(server, 'like_web_item', { title: 'Like a web-feed item', description: 'Like (or with liked:false, unlike) an article, episode or alert from a web feed in the person’s Feed, by its link. Open Media shows likes on these cards; the publisher is not told.', input: { url: z.string().url(), liked: z.boolean().optional() }, readOnly: false }, (args) => account.likeWebItem(args.url, args.liked));
+  tool(server, 'reshare_web_item', { title: 'Reshare a web-feed item', description: 'Reshare (or with reshared:false, undo) a web-feed item to the person’s followers, by its link. It is public: confirm with the person first.', input: { url: z.string().url(), reshared: z.boolean().optional() }, readOnly: false }, (args) => account.reshareWebItem(args.url, args.reshared));
+  tool(server, 'comment_on_web_item', { title: 'Comment on a web-feed item', description: 'Comment publicly on a web-feed item in Open Media, by its link. Confirm the exact text with the person first. Pass the same clientId (a UUID) when retrying so it is posted once.', input: { url: z.string().url(), text: z.string().min(1).max(2000), clientId: z.string().optional() }, readOnly: false }, (args) => account.commentOnWebItem(args.url, args.text, args.clientId));
+  tool(server, 'get_web_item_comments', { title: 'Read a web-feed item’s comments', description: 'Open Media comments on a web-feed item, by its link.', input: { url: z.string().url() }, readOnly: true }, (args) => account.webItemComments(args.url));
+  tool(server, 'mark_email_read', { title: 'Mark email read or unread', description: 'Mark emails in one connected mailbox read (or with unread:true, unread), as swiping in the app does. For IMAP mailboxes the mail server is told too. Use messageId values from list_email.', input: { mailboxId: z.string(), messageIds: z.array(z.string().min(1).max(998)).min(1).max(100), unread: z.boolean().optional() }, readOnly: false }, (args) => account.markEmailSeen(String(args.mailboxId), args.messageIds, args.unread));
+  tool(server, 'mark_bridged_chat_read', { title: 'Mark a bridged chat read or unread', description: 'Mark a bridged chat (WhatsApp, Signal, …) read up to an event (eventId from list_bridged_chats), or with read:false mark it unread. A read receipt goes to the other side only if the person shares read receipts; confirm first.', input: { chatId: z.string(), read: z.boolean().optional(), eventId: z.string().optional() }, readOnly: false }, (args) => account.setBridgedChatRead(String(args.chatId), args.read, args.eventId));
+  tool(server, 'cancel_chat_network_sign_in', { title: 'Cancel connecting a chat network', description: 'Stop a chat network sign-in started with start_chat_network_sign_in.', input: { network: z.string(), loginId: z.string() }, readOnly: false }, (args) => account.cancelChatSignIn(String(args.network), args.loginId));
+  tool(server, 'find_contacts_on_open_media', { title: 'Find contacts on Open Media', description: 'Which of the given email addresses and phone numbers (for example from the person’s contacts) belong to Open Media accounts that allow being found, with their handles. Nothing is stored or shared.', input: { emails: z.array(z.string().max(320)).max(500).optional(), phones: z.array(z.string().max(320)).max(500).optional() }, readOnly: true }, (args) => account.discoverContacts(args));
+  tool(server, 'get_ai_settings', { title: 'My AI models', description: 'Settings → Open Media AI: which model answers the person’s AI chat and which providers they saved a key for (only the last four characters; keys are never returned).', input: {}, readOnly: true }, () => account.aiKeys());
+  tool(server, 'choose_ai_model', { title: 'Choose who answers my AI chat', description: 'Choose which model answers the person’s AI chat: "built-in" (free) or a provider they already saved a key for. Confirm with the person first. Keys are added only by the person in Settings → Open Media AI.', input: { provider: z.string() }, readOnly: false }, (args) => account.chooseAiModel(args));
+  tool(server, 'remove_ai_key', { title: 'Remove a saved AI key', description: 'Delete the person’s saved API key for one provider; their AI chat falls back to the built-in model. Confirm with the person first.', input: { provider: z.string() }, readOnly: false }, (args) => account.removeAiKey(String(args.provider)));
+  tool(server, 'clear_ai_chat', { title: 'Clear my AI chat', description: 'Delete every message in the person’s Open Media AI chat. Saved keys and the chosen model stay. It cannot be undone: confirm with the person first.', input: {}, readOnly: false }, () => account.clearAi());
+  tool(server, 'refresh_payout_setup', { title: 'Refresh payout status', description: 'Ask Stripe for the person’s latest payout status after they finished the setup link from start_payout_setup, and return their payment setup.', input: {}, readOnly: false }, () => account.refreshPayouts());
 }
 
 function openMcp(env: AgentEnv, origin: string) {
