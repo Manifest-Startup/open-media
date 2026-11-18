@@ -22,7 +22,11 @@ Open Media is one open app for a person's social world: one feed across Open Med
 - Posting, likes, reshares and comments: open-media-posting.
 - The person's own feed algorithm: open-media-feed-lenses.
 - Blogs, news and weather in the Feed: open-media-web-feeds.
-- Jobs and professional profile: open-media-work. Payments: open-media-payments. Translation: open-media-translate. Checking listings: verify-listings.
+- Profile, privacy, people (find, follow, block), AI model and data export: open-media-account.
+- Selling: listings, events, paid posts, tips, payouts and ONDC: open-media-selling.
+- Jobs and professional profile: open-media-work. Paying: open-media-payments. Translation: open-media-translate. Checking listings: verify-listings.
+
+Every tool is listed at https://api.openmedia.site/.well-known/mcp.json. Things that only the app can do (passwords and passkeys, profile pictures and video files, cross-posting and likes signed with the person's own network keys, wallet linking, device settings) are named in the skills; send the person to the app for those.
 
 Many results come with a visual view (posts, inbox, algorithm, events, profiles) that hosts such as Claude and ChatGPT show inline; still give a short spoken summary.
 
@@ -30,7 +34,7 @@ Many results come with a visual view (posts, inbox, algorithm, events, profiles)
 
 Prefer MCP. Public tools need no account:
 
-- MCP (public, no key): `https://api.openmedia.site/open/mcp` - get_feed, list_feed_lenses, draft_feed_lens, preview_feed_lens, search, get_post, get_profile, get_person_timeline, find_upcoming_events, get_listing_checks, get_transparency, list_networks, find_setting, about_open_media, and sign-in: request_sign_in_code, sign_in_with_code, refresh_sign_in.
+- MCP (public, no key): `https://api.openmedia.site/open/mcp` - get_feed, list_feed_lenses, draft_feed_lens, preview_feed_lens, search, get_post, get_profile, get_resume, get_person_timeline, find_upcoming_events, get_listing_checks, get_transparency, list_networks, find_setting, about_open_media, and sign-in: request_sign_in_code, sign_in_with_code, refresh_sign_in.
 - MCP (the person's account): `https://api.openmedia.site/account/mcp`, signed in with OAuth ("Sign in with Open Media"); or `https://api.openmedia.site/me/mcp` with `Authorization: Bearer <token>` for scripts.
 
 ## Signing the person in

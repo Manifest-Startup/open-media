@@ -26,16 +26,16 @@ Results show the way Open Media looks, black and white and content first: posts,
 
 | Where | How |
 |---|---|
-| **Claude Code** | `claude plugin marketplace add mihirkavi/open-media` then `claude plugin install open-media@open-media` |
-| **Codex** | `codex plugin marketplace add mihirkavi/open-media` then `codex plugin add open-media@open-media` |
+| **Claude Code** | `claude plugin marketplace add Manifest-Startup/open-media` then `claude plugin install open-media@open-media` |
+| **Codex** | `codex plugin marketplace add Manifest-Startup/open-media` then `codex plugin add open-media@open-media` |
 | **Claude, ChatGPT (connectors)** | Add a custom connector with `https://api.openmedia.site/account/mcp` and sign in with Open Media |
-| **VS Code** | Command palette → *Chat: Install Plugin from Source* → `mihirkavi/open-media`, or [add the MCP server](vscode:mcp/install?%7B%22name%22%3A%22open-media%22%2C%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A//api.openmedia.site/account/mcp%22%7D) |
-| **Cursor** | Plugins → install from `mihirkavi/open-media`, or [add the MCP server](cursor://anysphere.cursor-deeplink/mcp/install?name=open-media&config=eyJ1cmwiOiJodHRwczovL2FwaS5vcGVubWVkaWEuc2l0ZS9hY2NvdW50L21jcCJ9) |
+| **VS Code** | Command palette → *Chat: Install Plugin from Source* → `Manifest-Startup/open-media`, or [add the MCP server](vscode:mcp/install?%7B%22name%22%3A%22open-media%22%2C%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A//api.openmedia.site/account/mcp%22%7D) |
+| **Cursor** | Plugins → install from `Manifest-Startup/open-media`, or [add the MCP server](cursor://anysphere.cursor-deeplink/mcp/install?name=open-media&config=eyJ1cmwiOiJodHRwczovL2FwaS5vcGVubWVkaWEuc2l0ZS9hY2NvdW50L21jcCJ9) |
 | **Antigravity** | `agy plugin install ./agent-plugin` from a clone of the repository |
-| **Gemini CLI** | `gemini extensions install https://github.com/mihirkavi/open-media` |
-| **Skills only** | `npx skills add mihirkavi/open-media` |
+| **Gemini CLI** | `gemini extensions install https://github.com/Manifest-Startup/open-media` |
+| **Skills only** | `npx skills add Manifest-Startup/open-media` |
 
-Then try **`/open-media:catch-up`**, **`/open-media:inbox`**, **`/open-media:feed`**, **`/open-media:post`**, **`/open-media:algorithm`** or **`/open-media:follow`** in Claude Code, or just ask.
+Then try **`/open-media:catch-up`**, **`/open-media:inbox`**, **`/open-media:post`** or **`/open-media:algorithm`** in Claude Code (every command is listed under *What's inside*), or just ask.
 
 ## Signing in
 
@@ -47,22 +47,26 @@ Scripts and CI can use a token instead: `https://api.openmedia.site/me/mcp` with
 
 ## What's inside
 
+<!-- generated:plugin-contents (npm run agent-plugin:sync) -->
 - **3 MCP servers:**
-  - `open-media` (public: 23 tools)
-  - `open-media-account` (your account: 91 more, 114 in all)
+  - `open-media` (public: 24 tools)
+  - `open-media-account` (your account: 113 more, 137 in all)
   - `open-media-docs`
-- **9 skills** that teach an agent to use Open Media well, safely:
+- **11 skills** that teach an agent to use Open Media well, safely:
   - `open-media`
+  - `open-media-feed-lenses`
   - `open-media-inbox`
   - `open-media-posting`
-  - `open-media-feed-lenses`
   - `open-media-web-feeds`
   - `open-media-work`
-  - `open-media-payments`
-  - `open-media-translate`
   - `verify-listings`
-- **6 slash commands** for the everyday jobs: `catch-up`, `inbox`, `feed`, `post`, `algorithm` and `follow`.
+  - `open-media-translate`
+  - `open-media-payments`
+  - `open-media-account`
+  - `open-media-selling`
+- **17 slash commands**, one for every part of Open Media: `algorithm`, `catch-up`, `feed`, `follow`, `inbox`, `post`, `profile`, `people`, `settings`, `ask`, `connect`, `events`, `jobs`, `sell`, `pay`, `translate`, `verify`.
 - **One visual view** ([MCP Apps](https://modelcontextprotocol.io)) for posts, your inbox, your algorithm, events and profiles. It loads nothing from elsewhere.
+<!-- /generated:plugin-contents -->
 
 ## Safety, by design
 
@@ -88,6 +92,6 @@ One plugin folder serves every catalog (ADR 0027):
 
 Name, version and servers are kept equal across all of them by a test, and no file holds a token.
 
-- **Source:** [github.com/mihirkavi/open-media](https://github.com/mihirkavi/open-media)
+- **Source:** [github.com/Manifest-Startup/open-media](https://github.com/Manifest-Startup/open-media)
 - **Links:** [Privacy](https://api.openmedia.site/privacy) · [Terms](https://api.openmedia.site/terms) · [Support](https://api.openmedia.site/contact)
 - **License:** MIT.

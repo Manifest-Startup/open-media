@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { agentSkills, skillMarkdown } from './agentSkills';
+import { agentCommands, agentSkills, commandMarkdown, skillMarkdown } from './agentSkills';
 
 test('the plugin ships exactly the skills the Worker serves', () => {
   for (const skill of agentSkills()) {
@@ -53,8 +53,6 @@ test('every marketplace manifest describes one plugin, with the same servers and
     assert.ok(png.readUInt32BE(16) >= 128, `${icon} is at least 128 px`);
   }
 
-  // Claude Code slash commands each say what they do.
-  for (const command of ['catch-up', 'inbox', 'feed', 'post', 'algorithm', 'follow']) assert.match(text(`commands/${command}.md`), /^---\ndescription: .+\n/, command);
 
   // MCP Registry entries, one per server, under the openmedia.site namespace.
   for (const [key, url] of Object.entries(expected)) {
@@ -63,4 +61,19 @@ test('every marketplace manifest describes one plugin, with the same servers and
     assert.ok((entry as unknown as { description: string }).description.length <= 100, 'the MCP Registry caps descriptions at 100 characters');
     assert.deepEqual(entry.remotes, [{ type: 'streamable-http', url }]);
   }
+});
+
+test('the plugin ships exactly the slash commands in agentSkills.ts, and every skill has one', () => {
+  const folder = join(__dirname, '..', '..', 'agent-plugin', 'commands');
+  const commands = agentCommands();
+  assert.deepEqual(readdirSync(folder).filter((file) => file.endsWith('.md')).sort(), commands.map((command) => `${command.name}.md`).sort(), 'run npm run agent-plugin:sync');
+  for (const command of commands) {
+    const file = readFileSync(join(folder, `${command.name}.md`), 'utf8');
+    assert.equal(file, commandMarkdown(command), `run npm run agent-plugin:sync (${command.name})`);
+    assert.match(file, /^---\ndescription: [^\n]+\nargument-hint: "[^"\n]*"\n---\n/, command.name);
+    assert.match(command.name, /^[a-z][a-z-]*$/);
+  }
+  const skills = new Set(agentSkills().map((skill) => skill.name));
+  for (const command of commands) assert.ok(skills.has(command.skill), `${command.name} names a real skill (${command.skill})`);
+  for (const skill of skills) assert.ok(commands.some((command) => command.skill === skill), `skill ${skill} has a slash command`);
 });

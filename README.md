@@ -21,7 +21,7 @@
   <img alt="Platforms: iOS, Android, Web" src="https://img.shields.io/badge/platforms-iOS%20%C2%B7%20Android%20%C2%B7%20Web-111111?style=flat-square">
   <img alt="Status: public beta" src="https://img.shields.io/badge/status-public%20beta-6b6b6b?style=flat-square">
   <a href="CONTRIBUTING.md"><img alt="Pull requests welcome" src="https://img.shields.io/badge/PRs-welcome-6b6b6b?style=flat-square"></a>
-  <a href="https://github.com/mihirkavi/open-media/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/mihirkavi/open-media?style=flat-square&color=111111"></a>
+  <a href="https://github.com/Manifest-Startup/open-media/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Manifest-Startup/open-media?style=flat-square&color=111111"></a>
 </p>
 
 <p align="center">
@@ -223,17 +223,19 @@ Everything Open Media does for people, it also offers to programs and AI assista
 ### Plugin for Claude, Codex and every agent marketplace
 
 The [agent-plugin](agent-plugin) folder is one plugin for Claude Code, Codex, VS Code, Cursor, Antigravity, Gemini CLI and the official MCP Registry. It bundles:
-- three MCP servers (114 tools);
-- nine skills;
-- six slash commands (`/open-media:catch-up`, `inbox`, `feed`, `post`, `algorithm`, `follow`);
+<!-- generated:plugin-summary (npm run agent-plugin:sync) -->
+- three MCP servers (137 tools);
+- 11 skills;
+- 17 slash commands (`/open-media:algorithm`, `catch-up`, `feed`, `follow`, `inbox`, `post`, `profile`, `people`, `settings`, `ask`, `connect`, `events`, `jobs`, `sell`, `pay`, `translate`, `verify`);
 - one visual view that shows posts, your inbox with read receipts, your algorithm and its code, events and profiles the way the app looks.
+<!-- /generated:plugin-summary -->
 
 ```bash
-claude plugin marketplace add mihirkavi/open-media && claude plugin install open-media@open-media
+claude plugin marketplace add Manifest-Startup/open-media && claude plugin install open-media@open-media
 ```
 
 ```bash
-codex plugin marketplace add mihirkavi/open-media && codex plugin add open-media@open-media
+codex plugin marketplace add Manifest-Startup/open-media && codex plugin add open-media@open-media
 ```
 
 Install links for VS Code and Cursor, and the steps for every other client, are in [agent-plugin/README.md](agent-plugin/README.md).
@@ -420,7 +422,7 @@ Open Media is one TypeScript codebase ([Expo](https://expo.dev) and React Native
 **Requirements:** Node.js 22.13 or newer (`nvm use`), npm and Docker Desktop. Xcode or Android Studio only for the phone simulators.
 
 ```bash
-git clone https://github.com/mihirkavi/open-media.git
+git clone https://github.com/Manifest-Startup/open-media.git
 cd open-media
 npm install
 npm run local
@@ -458,7 +460,7 @@ npm run test:db
 Open Media is built in the open, and contributions of every size are welcome: bug reports, ideas, design feedback, documentation and code.
 
 - Read [CONTRIBUTING.md](CONTRIBUTING.md) to get set up and learn how changes are reviewed.
-- Open an [issue](https://github.com/mihirkavi/open-media/issues) to report a bug or suggest an idea.
+- Open an [issue](https://github.com/Manifest-Startup/open-media/issues) to report a bug or suggest an idea.
 - Report security problems privately as described in [SECURITY.md](SECURITY.md).
 
 The `main` branch is protected: every outside change goes through a pull request and is reviewed by the maintainer before it is merged.

@@ -29,6 +29,7 @@ Every way of ordering the Open Media Feed is a lens: a small JSON manifest, neve
 3. Each post from `get_my_feed` has `why.scoring`: its score under their weights (points per signal, each boost's multiplier). Use it to explain "why this?" and to suggest a tune.
 4. "Undo": `get_my_feed_lens_history`, then `revert_feed_lens` with the version they want. Going back is itself a version.
 5. To audit a shared lens before installing it, read `get_feed_lens_history`.
+6. Interests: `get_feed_interests` and `set_feed_interests` are the topics Relevant favours (Settings → Feed algorithm → Interests). Confirm the new list with the person before replacing it.
 
 ## Rules
 

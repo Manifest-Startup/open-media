@@ -13,6 +13,8 @@ Posts are public. Everything that publishes needs the person's account (`https:/
 2. React: `like_post`, `reshare_post` (public: ask first) and `comment_on_post` (show the exact text first; pass the same `clientId` on a retry so it posts once). `get_post_comments` reads a thread.
 3. Likes, reshares and replies on Farcaster, Lens, Hive or DeSo posts go out from the person's own connected account, whose keys stay on their device. The tools say so; tell the person to do it from the Open Media app rather than trying another way.
 4. `delete_post` removes their own post after they confirm. `report_post` reports someone else's post with the reason they give.
+5. Articles, episodes and alerts from web feeds in their Feed take part too, by their link: `like_web_item`, `reshare_web_item` (public: ask first), `comment_on_web_item` (show the exact text first) and `get_web_item_comments`.
+6. Posts made here are text. A video, or posting to Farcaster, Lens, Hive, DeSo and other networks at the same time, is done in the app, where the file and the person's network keys are.
 
 ## Rules
 
