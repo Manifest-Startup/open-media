@@ -36,7 +36,7 @@ import {
 import { deletePost, reportPost } from "../data/postService";
 import { removeCrossPostCopies } from "../data/crossPostService";
 import { bridgedSourceOf, loadBridgedConversations, markBridgedChatRead, markBridgedChatUnread, sendBridgedMessage } from "../connectors/bridgesConnector";
-import { emailConversationId, normalizeStoredEmail, replySubject, subjectFromBody, unreadMailIn } from "../domain/emailNormalization";
+import { emailConversationId, emailReply, normalizeStoredEmail, subjectFromBody, unreadMailIn } from "../domain/emailNormalization";
 import { useLiveMail } from "./useLiveMail";
 import { profileHandleFromPath } from "../domain/profileFields";
 import { Conversation, Message, Person } from "../domain/models";
@@ -417,18 +417,8 @@ export function OpenMediaApp({
         (conversation) => conversation.id === conversationId,
       )?.email;
       if (email) {
-        // Replying to a specific email threads to it, from the mailbox that received it. In a
-        // group, it goes to whoever wrote that email, with everyone else in Cc (reply all).
-        const target = replyTo?.emailContext;
-        const others = email.recipients ?? [];
-        const primary = others.length > 1 && replyTo?.direction !== "inbound" ? email.address : target?.address ?? email.address;
-        await sendMail(target?.accountId ?? email.accountId, {
-          to: [primary],
-          ...(others.length > 1 ? { cc: others.filter((address) => address !== primary) } : {}),
-          subject: replySubject(target?.subject ?? email.latestSubject),
-          text: body,
-          inReplyTo: replyTo?.sourceMessageId ?? email.latestMessageId,
-        });
+        const reply = emailReply(email, body, replyTo);
+        await sendMail(reply.accountId, reply.mail);
         await refreshMail();
         return;
       }

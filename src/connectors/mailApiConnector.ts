@@ -1,4 +1,5 @@
 import { getAPIAccessToken, getSupabaseClient } from '../auth/supabase';
+import { storedMailFromRows } from '../domain/emailNormalization';
 import { SmtpSecurity } from '../domain/mailPresets';
 
 export type MailProtocol = 'imap' | 'pop3';
@@ -112,34 +113,10 @@ export async function listStoredMail(limit = 500): Promise<StoredMailMessage[]> 
   const [{ data, error }, unseen] = await Promise.all([
     client.rpc('open_media_list_mail_messages', { p_limit: limit }),
     // Read state (ADR 0026); without it, all mail counts as read.
-    Promise.resolve(client.rpc('open_media_unseen_mail')).then(({ data: rows }) => new Set(((rows ?? []) as Array<{ account_id: string; source_message_id: string }>).map((row) => `${row.account_id}:${row.source_message_id}`)), () => new Set<string>()),
+    Promise.resolve(client.rpc('open_media_unseen_mail')).then(({ data: rows }) => (rows ?? []) as Array<{ account_id: string; source_message_id: string }>, () => []),
   ]);
   if (error) throw error;
-  return ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
-    ...(unseen.has(`${row.account_id}:${row.source_message_id}`) ? { unread: true } : {}),
-    accountId: String(row.account_id),
-    accountEmail: String(row.account_email),
-    sourceMessageId: String(row.source_message_id),
-    mailbox: String(row.mailbox),
-    subject: String(row.subject ?? ''),
-    from: String(row.sender ?? ''),
-    to: Array.isArray(row.recipients) ? row.recipients.map(String) : [],
-    sentAt: String(row.sent_at),
-    text: String(row.body_text ?? ''),
-    senderVerified: row.sender_verified === true,
-    senderLogoUrl: typeof row.sender_logo_url === 'string' && row.sender_logo_url.startsWith('https://') ? row.sender_logo_url : undefined,
-    remoteImages: Array.isArray(row.remote_images) ? row.remote_images.map(String).filter((url) => url.startsWith('https://')) : [],
-    attachments: Array.isArray(row.attachments)
-      ? (row.attachments as Array<Record<string, unknown>>).map((item) => ({
-          filename: String(item.filename ?? 'attachment'),
-          contentType: String(item.contentType ?? 'application/octet-stream'),
-          size: Number(item.size ?? 0),
-          storagePath: typeof item.storagePath === 'string' ? item.storagePath : undefined,
-          inline: item.inline === true,
-        }))
-      : [],
-    inReplyTo: typeof row.in_reply_to === 'string' ? row.in_reply_to : undefined,
-  }));
+  return storedMailFromRows((data ?? []) as Array<Record<string, unknown>>, unseen);
 }
 
 /** Short-lived private link to a stored attachment (cached for reuse). */

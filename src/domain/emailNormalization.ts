@@ -1,6 +1,6 @@
-import { StoredMailMessage } from '../connectors/mailApiConnector';
+import type { OutgoingMail, StoredMailMessage } from '../connectors/mailApiConnector';
 import { emailPreview } from './emailBody';
-import { Conversation, MessageSource, Person } from './models';
+import { Conversation, EmailThreadInfo, Message, MessageSource, Person } from './models';
 import { isPersonalMailDomain, senderIconUrls } from './senderIcons';
 
 /** Mailbox names companies send from; mail from these joins one chat per company. */
@@ -198,6 +198,60 @@ function linkReplies<T extends { id: string; sourceMessageId: string; inReplyTo?
   });
 }
 
+/**
+ * Rows from `open_media_list_mail_messages` and `open_media_unseen_mail` as stored mail. The app
+ * (with the person's Supabase session) and the Worker's `/v1/me/inbox` both read mail this way.
+ */
+export function storedMailFromRows(rows: Array<Record<string, unknown>>, unseenRows: Array<{ account_id: string; source_message_id: string }> = []): StoredMailMessage[] {
+  const unseen = new Set(unseenRows.map((row) => `${row.account_id}:${row.source_message_id}`));
+  return rows.map((row) => ({
+    ...(unseen.has(`${row.account_id}:${row.source_message_id}`) ? { unread: true } : {}),
+    accountId: String(row.account_id),
+    accountEmail: String(row.account_email),
+    sourceMessageId: String(row.source_message_id),
+    mailbox: String(row.mailbox),
+    subject: String(row.subject ?? ''),
+    from: String(row.sender ?? ''),
+    to: Array.isArray(row.recipients) ? row.recipients.map(String) : [],
+    sentAt: String(row.sent_at),
+    text: String(row.body_text ?? ''),
+    senderVerified: row.sender_verified === true,
+    senderLogoUrl: typeof row.sender_logo_url === 'string' && row.sender_logo_url.startsWith('https://') ? row.sender_logo_url : undefined,
+    remoteImages: Array.isArray(row.remote_images) ? row.remote_images.map(String).filter((url) => url.startsWith('https://')) : [],
+    attachments: Array.isArray(row.attachments)
+      ? (row.attachments as Array<Record<string, unknown>>).map((item) => ({
+          filename: String(item.filename ?? 'attachment'),
+          contentType: String(item.contentType ?? 'application/octet-stream'),
+          size: Number(item.size ?? 0),
+          storagePath: typeof item.storagePath === 'string' ? item.storagePath : undefined,
+          inline: item.inline === true,
+        }))
+      : [],
+    inReplyTo: typeof row.in_reply_to === 'string' ? row.in_reply_to : undefined,
+  }));
+}
+
+/**
+ * The email a reply in an email conversation sends, and from which mailbox. Replying to a specific
+ * email threads to it, from the mailbox that received it. In a group, it goes to whoever wrote that
+ * email, with everyone else in Cc (reply all).
+ */
+export function emailReply(email: EmailThreadInfo, text: string, replyTo?: Pick<Message, 'direction' | 'sourceMessageId' | 'emailContext'>): { accountId: string; mail: OutgoingMail } {
+  const target = replyTo?.emailContext;
+  const others = email.recipients ?? [];
+  const primary = others.length > 1 && replyTo?.direction !== 'inbound' ? email.address : target?.address ?? email.address;
+  return {
+    accountId: target?.accountId ?? email.accountId,
+    mail: {
+      to: [primary],
+      ...(others.length > 1 ? { cc: others.filter((address) => address !== primary) } : {}),
+      subject: replySubject(target?.subject ?? email.latestSubject),
+      text,
+      inReplyTo: replyTo?.sourceMessageId ?? email.latestMessageId,
+    },
+  };
+}
+
 export function replySubject(subject: string): string {
   const trimmed = subject.trim() || '(No subject)';
   return /^re:/i.test(trimmed) ? trimmed : `Re: ${trimmed}`;
@@ -213,6 +267,6 @@ function attachmentPreview(message: StoredMailMessage): string {
 function brandName(organization: string): string { const label = organization.split('.')[0]; return label.charAt(0).toUpperCase() + label.slice(1); }
 /** The display name in "Name <address>", or '' when there is only an address. */
 function extractName(value: string): string { const name = value.replace(/<[^>]+>/, '').trim().replace(/^['"]|['"]$/g, '').trim(); return name.includes('@') ? '' : name; }
-function initialsFor(name: string): string { return name.split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || '?'; }
+export function initialsFor(name: string): string { return name.split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || '?'; }
 function stableID(value: string): string { let hash = 2166136261; for (let index = 0; index < value.length; index += 1) hash = Math.imul(hash ^ value.charCodeAt(index), 16777619); return (hash >>> 0).toString(36); }
-function colorFor(value: string): string { const colors = ['#7B61FF','#EB5757','#F2994A','#27AE60','#2F80ED','#9B51E0']; return colors[parseInt(stableID(value), 36) % colors.length]; }
+export function colorFor(value: string): string { const colors = ['#7B61FF','#EB5757','#F2994A','#27AE60','#2F80ED','#9B51E0']; return colors[parseInt(stableID(value), 36) % colors.length]; }

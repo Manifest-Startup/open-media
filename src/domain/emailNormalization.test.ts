@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { StoredMailMessage } from '../connectors/mailApiConnector';
-import { correspondentKey, emailConversationId, normalizeStoredEmail, subjectFromBody, unreadMailIn } from './emailNormalization';
+import { correspondentKey, emailConversationId, emailReply, normalizeStoredEmail, storedMailFromRows, subjectFromBody, unreadMailIn } from './emailNormalization';
 import { receiptOf } from './receipts';
 
 const base = { accountId: 'acct-1', accountEmail: 'me@gmail.com', mailbox: 'INBOX', to: ['me@gmail.com'] };
@@ -139,4 +139,24 @@ test('company mail is marked as a company; a person at a company is not', () => 
   assert.equal(byName.get('Bank'), 'bankofamerica.com');
   assert.equal(byName.get('Alice'), undefined);
   assert.equal(byName.get('Ana'), undefined);
+});
+
+test('maps stored mail rows with read state, keeping only https images', () => {
+  const [message] = storedMailFromRows(
+    [{ account_id: 'acct-1', account_email: 'me@gmail.com', source_message_id: '<a@x>', mailbox: 'INBOX', subject: null, sender: 'Ana <ana@example.com>', recipients: ['me@gmail.com'], sent_at: '2026-10-01T10:00:00Z', body_text: 'hi', remote_images: ['https://i/a.png', 'http://i/b.png'], attachments: [{ filename: 'a.pdf', size: 3 }], in_reply_to: '<z@x>' }],
+    [{ account_id: 'acct-1', source_message_id: '<a@x>' }],
+  );
+  assert.equal(message.unread, true);
+  assert.equal(message.subject, '');
+  assert.deepEqual(message.remoteImages, ['https://i/a.png']);
+  assert.equal(message.attachments?.[0].contentType, 'application/octet-stream');
+  assert.equal(message.inReplyTo, '<z@x>');
+});
+
+test('replies thread to the latest email, and reply all in a group', () => {
+  const [one] = normalizeStoredEmail([mail({ sourceMessageId: '<a@x>', subject: 'Plans' })]);
+  assert.deepEqual(emailReply(one.email!, 'Sure'), { accountId: 'acct-1', mail: { to: ['ana@example.com'], subject: 'Re: Plans', text: 'Sure', inReplyTo: '<a@x>' } });
+  const group = { ...one.email!, recipients: ['ana@example.com', 'bo@example.com'] };
+  const reply = emailReply(group, 'All good', { direction: 'inbound', sourceMessageId: '<b@x>', emailContext: { providerThreadId: 't', subject: 'Re: Plans', address: 'bo@example.com', accountId: 'acct-2' } });
+  assert.deepEqual(reply, { accountId: 'acct-2', mail: { to: ['bo@example.com'], cc: ['ana@example.com'], subject: 'Re: Plans', text: 'All good', inReplyTo: '<b@x>' } });
 });
