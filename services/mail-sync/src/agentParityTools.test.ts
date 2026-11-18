@@ -67,6 +67,8 @@ test('web-feed items, interests and people search call the app’s RPCs', async 
     await account.setFeedInterests(['design', ' cooking ']);
     assert.deepEqual(calls.at(-1)!.body, { p_interests: ['design', 'cooking'] });
     await assert.rejects(() => account.setFeedInterests('design'), /topics/);
+    await assert.rejects(() => account.setFeedInterests(Array.from({ length: 21 }, (_, i) => `topic ${i}`)), /20 topics/);
+    await assert.rejects(() => account.setFeedInterests(['x'.repeat(41)]), /40 characters/);
     await account.findPeople('@sa');
     assert.deepEqual(calls.at(-1)!.body, { p_query: 'sa' });
     await assert.rejects(() => account.findPeople('s'), /two characters/);
