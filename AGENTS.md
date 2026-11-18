@@ -38,7 +38,9 @@ Open Media ships as one app on web, iOS, and Android. A change is not done until
 ## Agent plugin and agent site
 
 - Skills live in `src/domain/agentSkills.ts`; run `npm run agent-plugin:sync` after changing them (a test fails if `agent-plugin/skills` drifts). Never edit the generated `SKILL.md` files.
-- One plugin, many marketplaces (ADR 0027): `agent-plugin/` holds the Claude (`.claude-plugin/`), Codex (`.codex-plugin/`), Agent Plugins standard (`plugin.json` + `mcp.json`), Antigravity (`.antigravity-plugin/` + `mcp_config.json`) and MCP Registry (`registry/`) manifests; Gemini CLI's is `gemini-extension.json` at the repo root. Keep name, version and the three servers equal everywhere (a test checks). The account server is `/account/mcp` with OAuth, so no manifest ever holds a token, header or env placeholder.
+- Slash commands are data too (`agentCommands` in the same file); the sync also writes `agent-plugin/commands/` and the tool/skill/command counts in both READMEs.
+- One plugin, many marketplaces (ADR 0027, 0043): `agent-plugin/` holds the Claude (`.claude-plugin/`), Codex (`.codex-plugin/`), Agent Plugins standard (`plugin.json` + `mcp.json`, also read by Kiro, Copilot and ChatGPT), Cursor (`.cursor-plugin/`), Antigravity (`.antigravity-plugin/` + `mcp_config.json`), MCP Registry (`registry/`) and Docker draft (`registry/docker/`) files; Gemini CLI's `gemini-extension.json` and `glama.json` are at the repo root.
+- Parity (ADR 0043): every REST operation and `src/data` function must map to an MCP tool or a reason in `src/domain/agentParity.ts`; `agentParity.test.ts` enforces it. Keep name, version and the three servers equal everywhere (a test checks). The account server is `/account/mcp` with OAuth, so no manifest ever holds a token, header or env placeholder.
 - WebMCP tools are data in `src/domain/webMcpTools.ts`, used by both the Worker's pages and the web app. Keep them read-only.
 
 ## ONDC seller app

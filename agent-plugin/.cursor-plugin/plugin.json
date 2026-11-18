@@ -1,0 +1,29 @@
+{
+  "name": "open-media",
+  "version": "2.1.0",
+  "description": "Open Media for AI agents: one feed and search across Open Media, Farcaster, Lens, Hive and DeSo, your inbox (messages, email, chats) with read receipts, your own feed algorithm, web feeds, events, and your account, with every change confirmed first.",
+  "author": {
+    "name": "Open Media"
+  },
+  "homepage": "https://api.openmedia.site/agents",
+  "repository": "https://github.com/Manifest-Startup/open-media",
+  "license": "MIT",
+  "keywords": [
+    "social",
+    "feed",
+    "inbox",
+    "email",
+    "messaging",
+    "farcaster",
+    "lens",
+    "hive",
+    "deso",
+    "rss",
+    "mcp",
+    "open-source"
+  ],
+  "logo": "assets/icon.png",
+  "skills": "./skills/",
+  "commands": "./commands/",
+  "mcpServers": "./.cursor-plugin/mcp.json"
+}

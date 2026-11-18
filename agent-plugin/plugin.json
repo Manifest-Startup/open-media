@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "open-media",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Open Media for AI agents: one feed and search across Open Media, Farcaster, Lens, Hive and DeSo, your inbox (messages, email, chats) with read receipts, your own feed algorithm, web feeds, events, and your account, with every change confirmed first.",
   "author": {
     "name": "Open Media",

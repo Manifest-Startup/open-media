@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
+
+import { parse as parseYaml } from 'yaml';
 
 import { agentCommands, agentSkills, commandMarkdown, skillMarkdown } from './agentSkills';
 
@@ -17,7 +19,11 @@ test('every marketplace manifest describes one plugin, with the same servers and
   const root = join(__dirname, '..', '..', 'agent-plugin');
   const text = (path: string) => readFileSync(join(root, path), 'utf8');
   const read = <T = Record<string, unknown>>(path: string) => JSON.parse(text(path)) as T;
-  const manifests = ['.claude-plugin/plugin.json', '.codex-plugin/plugin.json', 'plugin.json', '.antigravity-plugin/plugin.json'].map((path) => [path, read<{ name: string; version: string }>(path)] as const);
+  const repo = join(root, '..');
+  const readRepo = <T = Record<string, unknown>>(path: string) => JSON.parse(readFileSync(join(repo, path), 'utf8')) as T;
+  const manifests = ['.claude-plugin/plugin.json', '.codex-plugin/plugin.json', 'plugin.json', '.antigravity-plugin/plugin.json', '.cursor-plugin/plugin.json'].map((path) => [path, read<{ name: string; version: string }>(path)] as const);
+  manifests.push(['../gemini-extension.json', readRepo<{ name: string; version: string }>('gemini-extension.json')]);
+  for (const entry of ['open-media', 'open-media-account', 'open-media-docs']) manifests.push([`registry/${entry}.server.json`, { name: 'open-media', version: read<{ version: string }>(`registry/${entry}.server.json`).version }]);
   assert.equal(new Set(manifests.map(([, item]) => `${item.name}@${item.version}`)).size, 1, 'one name and version everywhere');
 
   // The same three servers in every format; the account is reached with OAuth, never a token in a file.
@@ -30,7 +36,11 @@ test('every marketplace manifest describes one plugin, with the same servers and
   assert.deepEqual(urls(portable.mcpServers as never), expected);
   assert.ok(Object.values(portable.mcpServers).every((server) => server.type === 'streamable-http' && Object.keys(server).sort().join() === 'type,url'), 'portable servers carry only type and url');
   assert.deepEqual(urls(read<{ mcpServers: Record<string, { serverUrl: string }> }>('mcp_config.json').mcpServers), expected);
-  for (const file of ['.mcp.json', 'mcp.json', 'mcp_config.json', '.claude-plugin/plugin.json', '.codex-plugin/plugin.json', 'plugin.json']) {
+  // Cursor infers the transport from url (cursor.com/docs/reference/plugins); Gemini CLI reads httpUrl.
+  assert.deepEqual(urls(read<{ mcpServers: Record<string, { url: string }> }>('.cursor-plugin/mcp.json').mcpServers), expected);
+  assert.ok(Object.values(read<{ mcpServers: Record<string, Record<string, unknown>> }>('.cursor-plugin/mcp.json').mcpServers).every((server) => Object.keys(server).join() === 'url'));
+  assert.deepEqual(Object.fromEntries(Object.entries(readRepo<{ mcpServers: Record<string, { httpUrl: string }> }>('gemini-extension.json').mcpServers).map(([name, server]) => [name, server.httpUrl])), expected);
+  for (const file of ['.mcp.json', 'mcp.json', 'mcp_config.json', '.claude-plugin/plugin.json', '.codex-plugin/plugin.json', 'plugin.json', '.cursor-plugin/plugin.json', '.cursor-plugin/mcp.json', 'registry/docker/open-media/server.yaml', '../gemini-extension.json', '../glama.json']) {
     assert.doesNotMatch(text(file), /authorization|bearer|token_env|\$\{/i, `${file} holds no credential or placeholder`);
   }
 
@@ -38,6 +48,27 @@ test('every marketplace manifest describes one plugin, with the same servers and
   const standard = read<Record<string, unknown>>('plugin.json');
   assert.equal(standard.$schema, 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json');
   assert.deepEqual(Object.keys(standard).filter((key) => !['$schema', 'name', 'version', 'description', 'author', 'homepage', 'repository', 'license', 'keywords', 'extensions'].includes(key)), []);
+
+  // Kiro powers read the same file and also require version, description, author.name and keywords (kiro.dev/docs/powers/create).
+  const kiro = standard as { version?: string; description?: string; author?: { name?: string }; keywords?: string[] };
+  assert.ok(kiro.version && kiro.description && kiro.author?.name && kiro.keywords?.length, 'Kiro power fields');
+
+  // Cursor: only documented fields; skills, commands and servers point at real paths.
+  const cursor = read<Record<string, unknown>>('.cursor-plugin/plugin.json');
+  assert.deepEqual(Object.keys(cursor).filter((key) => !['name', 'description', 'version', 'author', 'homepage', 'repository', 'license', 'keywords', 'logo', 'rules', 'agents', 'skills', 'commands', 'hooks', 'mcpServers', 'variables'].includes(key)), []);
+  assert.deepEqual(Object.keys(cursor.author as object), ['name']);
+  for (const key of ['logo', 'skills', 'commands', 'mcpServers']) assert.ok(existsSync(join(root, String(cursor[key]))), `.cursor-plugin/plugin.json ${key}`);
+
+  // Every repository-level catalog (Claude Code, Copilot CLI and VS Code read the Claude one; Cursor; Codex) points at this folder.
+  assert.equal(readRepo<{ plugins: { source: string }[] }>('.claude-plugin/marketplace.json').plugins[0].source, './agent-plugin');
+  assert.equal(readRepo<{ plugins: { source: string }[] }>('.cursor-plugin/marketplace.json').plugins[0].source, 'agent-plugin');
+  assert.equal(readRepo<{ plugins: { source: { path: string } }[] }>('.agents/plugins/marketplace.json').plugins[0].source.path, './agent-plugin');
+
+  // Glama claims the server through glama.json; Docker's catalog entry is a draft for a pull request to docker/mcp-registry.
+  assert.equal(readRepo<{ $schema: string }>('glama.json').$schema, 'https://glama.ai/mcp/schemas/server.json');
+  const docker = parseYaml(text('registry/docker/open-media/server.yaml')) as { name: string; type: string; remote: { transport_type: string; url: string } };
+  assert.deepEqual([docker.name, docker.type, docker.remote], ['open-media', 'remote', { transport_type: 'streamable-http', url: expected['open-media'] }], 'Docker lists the public server only');
+  assert.deepEqual(read('registry/docker/open-media/tools.json'), []);
 
   // Codex and ChatGPT directory limits.
   const codex = read<{ interface: Record<string, string | string[]> }>('.codex-plugin/plugin.json').interface;

@@ -34,6 +34,12 @@ Results show the way Open Media looks, black and white and content first: posts,
 | **Antigravity** | `agy plugin install ./agent-plugin` from a clone of the repository |
 | **Gemini CLI** | `gemini extensions install https://github.com/Manifest-Startup/open-media` |
 | **Skills only** | `npx skills add Manifest-Startup/open-media` |
+| **GitHub Copilot CLI** | Add `Manifest-Startup/open-media` as a plugin marketplace; it reads the same `.claude-plugin/marketplace.json` and plugin |
+| **Kiro** | Powers → add from GitHub, pointing at the `agent-plugin` folder (Kiro reads `plugin.json`, `mcp.json` and `skills/`) |
+| **OpenCode** | In `opencode.jsonc`: `"mcp": { "servers": { "open-media": { "type": "remote", "url": "https://api.openmedia.site/account/mcp" } } }`; it signs in with OAuth |
+| **Amp** | In `.amp/settings.json`: `"amp.mcpServers": { "open-media": { "url": "https://api.openmedia.site/account/mcp" } }`, and `amp skill add https://github.com/Manifest-Startup/open-media` |
+| **Goose** | Extensions → add a Streamable HTTP extension with `https://api.openmedia.site/account/mcp` |
+| **Windsurf** | In `mcp_config.json`: `"mcpServers": { "open-media": { "serverUrl": "https://api.openmedia.site/account/mcp" } }` |
 
 Then try **`/open-media:catch-up`**, **`/open-media:inbox`**, **`/open-media:post`** or **`/open-media:algorithm`** in Claude Code (every command is listed under *What's inside*), or just ask.
 
@@ -80,15 +86,22 @@ Scripts and CI can use a token instead: `https://api.openmedia.site/me/mcp` with
 
 One plugin folder serves every catalog (ADR 0027):
 
-| File | Read by |
-|---|---|
-| `.claude-plugin/plugin.json` + `.mcp.json` | Claude Code, the Claude plugin directory, VS Code (Claude format) |
-| `.codex-plugin/plugin.json` | Codex (compatibility layout) |
-| `plugin.json` + `mcp.json` | [Agent Plugins](https://agent-plugins.org) standard: Codex, VS Code, Cursor |
-| `.antigravity-plugin/plugin.json` + `mcp_config.json` | Antigravity |
-| `../gemini-extension.json` + `../GEMINI.md` | Gemini CLI |
-| `registry/*.server.json` | The official MCP Registry (`site.openmedia/*`) |
-| `skills/*/SKILL.md` | Every client and skills.sh ([Agent Skills](https://agentskills.io)) |
+| File | Read by | Checked |
+|---|---|---|
+| `.claude-plugin/plugin.json` + `.mcp.json` | Claude Code, the Claude plugin directory, VS Code and GitHub Copilot CLI (Claude format) | ADR 0027, [Copilot CLI plugins](https://docs.github.com/en/copilot/reference/cli-plugin-reference) |
+| `../.claude-plugin/marketplace.json` | Claude Code, Copilot CLI and VS Code (`chat.plugins.marketplaces`) | [VS Code agent plugins](https://code.visualstudio.com/docs/copilot/customization/agent-plugins) |
+| `.codex-plugin/plugin.json` + `../.agents/plugins/marketplace.json` | Codex (compatibility layout) | ADR 0027 |
+| `plugin.json` + `mcp.json` | [Agent Plugins](https://agent-plugins.org) 1.0.0: Codex, VS Code, Copilot CLI, Cursor (skills and servers), Kiro powers, and ChatGPT's plugin upload | [Kiro powers](https://kiro.dev/docs/powers/create), [ChatGPT submission](https://developers.openai.com/apps-sdk/deploy/submission) |
+| `.cursor-plugin/plugin.json` + `.cursor-plugin/mcp.json`, `../.cursor-plugin/marketplace.json` | Cursor (adds the slash commands) | [Cursor plugins](https://cursor.com/docs/reference/plugins) |
+| `.antigravity-plugin/plugin.json` + `mcp_config.json` | Antigravity | ADR 0027 |
+| `../gemini-extension.json` + `../GEMINI.md` | Gemini CLI | ADR 0027 |
+| `registry/*.server.json` | The official MCP Registry (`site.openmedia/*`, schema 2025-12-11), and clients that install from it | [server.json reference](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/generic-server-json.md) |
+| `registry/docker/open-media/` | A draft for the Docker MCP Catalog (a pull request to docker/mcp-registry; public server only) | [docker/mcp-registry CONTRIBUTING](https://github.com/docker/mcp-registry/blob/main/CONTRIBUTING.md) |
+| `../glama.json` | Glama (claiming the server) | [glama.json](https://glama.ai/blog/2025-07-08-what-is-glamajson) |
+| `skills/*/SKILL.md` | Every client and skills.sh ([Agent Skills](https://agentskills.io)), OpenCode and Amp | [OpenCode skills](https://opencode.ai/docs/skills), [Amp skills](https://ampcode.com/docs/customize/skills) |
+| `commands/*.md` | Claude Code, Cursor | generated with the skills |
+
+Smithery, the Cline MCP Marketplace, the Claude connectors directory and ChatGPT apps take a URL or a form, not a file in this repository; the steps are in ADR 0043.
 
 Name, version and servers are kept equal across all of them by a test, and no file holds a token.
 

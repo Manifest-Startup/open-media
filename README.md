@@ -222,7 +222,7 @@ Everything Open Media does for people, it also offers to programs and AI assista
 
 ### Plugin for Claude, Codex and every agent marketplace
 
-The [agent-plugin](agent-plugin) folder is one plugin for Claude Code, Codex, VS Code, Cursor, Antigravity, Gemini CLI and the official MCP Registry. It bundles:
+The [agent-plugin](agent-plugin) folder is one plugin for Claude Code, Codex, VS Code, GitHub Copilot, Cursor, Kiro, Antigravity, Gemini CLI and the official MCP Registry. It bundles:
 <!-- generated:plugin-summary (npm run agent-plugin:sync) -->
 - three MCP servers (137 tools);
 - 11 skills;

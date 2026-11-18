@@ -2,7 +2,7 @@
   "name": "open-media",
   "displayName": "Open Media",
   "description": "Open Media for AI agents: one feed and search across Open Media, Farcaster, Lens, Hive and DeSo, your inbox (messages, email, chats) with read receipts, your own feed algorithm, web feeds, events, and your account, with every change confirmed first.",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "logo": "./assets/icon.png",
   "suggestedPrompts": [
     "Catch me up on my unread messages and email",

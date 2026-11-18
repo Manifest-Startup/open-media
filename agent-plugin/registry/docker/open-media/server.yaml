@@ -1,0 +1,19 @@
+# Draft entry for the Docker MCP Catalog (github.com/docker/mcp-registry, servers/open-media/).
+# Copy this folder into a pull request there; this repository never publishes it (ADR 0027).
+# Only the public, no-sign-in server is listed: Docker's OAuth provider setup for
+# Dynamic Client Registration is not documented, so the account server stays off this catalog.
+name: open-media
+type: remote
+meta:
+  category: productivity
+  tags:
+    - social
+    - feed
+    - remote
+about:
+  title: Open Media
+  description: Public posts, search, profiles, events and feed algorithms across Open Media, Farcaster, Lens, Hive and DeSo. No account needed.
+  icon: https://raw.githubusercontent.com/Manifest-Startup/open-media/main/agent-plugin/assets/icon.png
+remote:
+  transport_type: streamable-http
+  url: https://api.openmedia.site/open/mcp
