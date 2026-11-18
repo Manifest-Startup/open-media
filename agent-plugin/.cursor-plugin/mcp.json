@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "open-media": {
+      "url": "https://api.openmedia.site/open/mcp"
+    },
+    "open-media-docs": {
+      "url": "https://api.openmedia.site/docs/mcp"
+    },
+    "open-media-account": {
+      "url": "https://api.openmedia.site/account/mcp"
+    }
+  }
+}

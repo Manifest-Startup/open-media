@@ -1,0 +1,13 @@
+{
+  "name": "open-media",
+  "owner": {
+    "name": "Open Media"
+  },
+  "plugins": [
+    {
+      "name": "open-media",
+      "source": "agent-plugin",
+      "description": "One feed, inbox and feed algorithm across Open Media, Farcaster, Lens, Hive and DeSo, for AI agents."
+    }
+  ]
+}

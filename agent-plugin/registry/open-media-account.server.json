@@ -3,10 +3,10 @@
   "name": "site.openmedia/account",
   "title": "Open Media account",
   "description": "Your Open Media account over OAuth: inbox, email, chats, posts, contacts and your feed algorithm.",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "websiteUrl": "https://api.openmedia.site/agents",
   "repository": {
-    "url": "https://github.com/mihirkavi/open-media",
+    "url": "https://github.com/Manifest-Startup/open-media",
     "source": "github",
     "subfolder": "agent-plugin"
   },

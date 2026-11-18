@@ -3,10 +3,10 @@
   "name": "site.openmedia/open",
   "title": "Open Media",
   "description": "Public feed and search across Open Media, Farcaster, Lens, Hive and DeSo, with events and web feeds.",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "websiteUrl": "https://api.openmedia.site/agents",
   "repository": {
-    "url": "https://github.com/mihirkavi/open-media",
+    "url": "https://github.com/Manifest-Startup/open-media",
     "source": "github",
     "subfolder": "agent-plugin"
   },

@@ -5,6 +5,7 @@
   - `claude plugin validate --strict` passes for the plugin and the marketplace.
   - Production needs a deploy for `/account/mcp`, OAuth account sign-in, the new tools, the view and `/terms`.
   - Directory submissions and MCP Registry publishing are owner steps (see Consequences).
+- Extended by [ADR 0043](0043-agent-parity-and-every-marketplace.md) (2026-11-17): app parity and its guard, generated commands and counts, Cursor, Kiro, Copilot CLI, Glama and Docker files, and the repository's new name.
 - Builds on: [ADR 0012](0012-agent-interfaces-and-design-system.md) (agent interfaces), [ADR 0014](0014-agent-readiness-webmcp-and-plugin.md) (plugin and WebMCP), [ADR 0005](0005-open-media-events-layer-1.md) (the OAuth provider), [ADR 0026](0026-read-receipts.md).
 
 ## Context

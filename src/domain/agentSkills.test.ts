@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { agentSkills, skillMarkdown } from './agentSkills';
+import { parse as parseYaml } from 'yaml';
+
+import { agentCommands, agentSkills, commandMarkdown, skillMarkdown } from './agentSkills';
 
 test('the plugin ships exactly the skills the Worker serves', () => {
   for (const skill of agentSkills()) {
@@ -17,7 +19,11 @@ test('every marketplace manifest describes one plugin, with the same servers and
   const root = join(__dirname, '..', '..', 'agent-plugin');
   const text = (path: string) => readFileSync(join(root, path), 'utf8');
   const read = <T = Record<string, unknown>>(path: string) => JSON.parse(text(path)) as T;
-  const manifests = ['.claude-plugin/plugin.json', '.codex-plugin/plugin.json', 'plugin.json', '.antigravity-plugin/plugin.json'].map((path) => [path, read<{ name: string; version: string }>(path)] as const);
+  const repo = join(root, '..');
+  const readRepo = <T = Record<string, unknown>>(path: string) => JSON.parse(readFileSync(join(repo, path), 'utf8')) as T;
+  const manifests = ['.claude-plugin/plugin.json', '.codex-plugin/plugin.json', 'plugin.json', '.antigravity-plugin/plugin.json', '.cursor-plugin/plugin.json'].map((path) => [path, read<{ name: string; version: string }>(path)] as const);
+  manifests.push(['../gemini-extension.json', readRepo<{ name: string; version: string }>('gemini-extension.json')]);
+  for (const entry of ['open-media', 'open-media-account', 'open-media-docs']) manifests.push([`registry/${entry}.server.json`, { name: 'open-media', version: read<{ version: string }>(`registry/${entry}.server.json`).version }]);
   assert.equal(new Set(manifests.map(([, item]) => `${item.name}@${item.version}`)).size, 1, 'one name and version everywhere');
 
   // The same three servers in every format; the account is reached with OAuth, never a token in a file.
@@ -30,7 +36,11 @@ test('every marketplace manifest describes one plugin, with the same servers and
   assert.deepEqual(urls(portable.mcpServers as never), expected);
   assert.ok(Object.values(portable.mcpServers).every((server) => server.type === 'streamable-http' && Object.keys(server).sort().join() === 'type,url'), 'portable servers carry only type and url');
   assert.deepEqual(urls(read<{ mcpServers: Record<string, { serverUrl: string }> }>('mcp_config.json').mcpServers), expected);
-  for (const file of ['.mcp.json', 'mcp.json', 'mcp_config.json', '.claude-plugin/plugin.json', '.codex-plugin/plugin.json', 'plugin.json']) {
+  // Cursor infers the transport from url (cursor.com/docs/reference/plugins); Gemini CLI reads httpUrl.
+  assert.deepEqual(urls(read<{ mcpServers: Record<string, { url: string }> }>('.cursor-plugin/mcp.json').mcpServers), expected);
+  assert.ok(Object.values(read<{ mcpServers: Record<string, Record<string, unknown>> }>('.cursor-plugin/mcp.json').mcpServers).every((server) => Object.keys(server).join() === 'url'));
+  assert.deepEqual(Object.fromEntries(Object.entries(readRepo<{ mcpServers: Record<string, { httpUrl: string }> }>('gemini-extension.json').mcpServers).map(([name, server]) => [name, server.httpUrl])), expected);
+  for (const file of ['.mcp.json', 'mcp.json', 'mcp_config.json', '.claude-plugin/plugin.json', '.codex-plugin/plugin.json', 'plugin.json', '.cursor-plugin/plugin.json', '.cursor-plugin/mcp.json', 'registry/docker/open-media/server.yaml', '../gemini-extension.json', '../glama.json']) {
     assert.doesNotMatch(text(file), /authorization|bearer|token_env|\$\{/i, `${file} holds no credential or placeholder`);
   }
 
@@ -38,6 +48,27 @@ test('every marketplace manifest describes one plugin, with the same servers and
   const standard = read<Record<string, unknown>>('plugin.json');
   assert.equal(standard.$schema, 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json');
   assert.deepEqual(Object.keys(standard).filter((key) => !['$schema', 'name', 'version', 'description', 'author', 'homepage', 'repository', 'license', 'keywords', 'extensions'].includes(key)), []);
+
+  // Kiro powers read the same file and also require version, description, author.name and keywords (kiro.dev/docs/powers/create).
+  const kiro = standard as { version?: string; description?: string; author?: { name?: string }; keywords?: string[] };
+  assert.ok(kiro.version && kiro.description && kiro.author?.name && kiro.keywords?.length, 'Kiro power fields');
+
+  // Cursor: only documented fields; skills, commands and servers point at real paths.
+  const cursor = read<Record<string, unknown>>('.cursor-plugin/plugin.json');
+  assert.deepEqual(Object.keys(cursor).filter((key) => !['name', 'description', 'version', 'author', 'homepage', 'repository', 'license', 'keywords', 'logo', 'rules', 'agents', 'skills', 'commands', 'hooks', 'mcpServers', 'variables'].includes(key)), []);
+  assert.deepEqual(Object.keys(cursor.author as object), ['name']);
+  for (const key of ['logo', 'skills', 'commands', 'mcpServers']) assert.ok(existsSync(join(root, String(cursor[key]))), `.cursor-plugin/plugin.json ${key}`);
+
+  // Every repository-level catalog (Claude Code, Copilot CLI and VS Code read the Claude one; Cursor; Codex) points at this folder.
+  assert.equal(readRepo<{ plugins: { source: string }[] }>('.claude-plugin/marketplace.json').plugins[0].source, './agent-plugin');
+  assert.equal(readRepo<{ plugins: { source: string }[] }>('.cursor-plugin/marketplace.json').plugins[0].source, 'agent-plugin');
+  assert.equal(readRepo<{ plugins: { source: { path: string } }[] }>('.agents/plugins/marketplace.json').plugins[0].source.path, './agent-plugin');
+
+  // Glama claims the server through glama.json; Docker's catalog entry is a draft for a pull request to docker/mcp-registry.
+  assert.equal(readRepo<{ $schema: string }>('glama.json').$schema, 'https://glama.ai/mcp/schemas/server.json');
+  const docker = parseYaml(text('registry/docker/open-media/server.yaml')) as { name: string; type: string; remote: { transport_type: string; url: string } };
+  assert.deepEqual([docker.name, docker.type, docker.remote], ['open-media', 'remote', { transport_type: 'streamable-http', url: expected['open-media'] }], 'Docker lists the public server only');
+  assert.deepEqual(read('registry/docker/open-media/tools.json'), []);
 
   // Codex and ChatGPT directory limits.
   const codex = read<{ interface: Record<string, string | string[]> }>('.codex-plugin/plugin.json').interface;
@@ -53,8 +84,6 @@ test('every marketplace manifest describes one plugin, with the same servers and
     assert.ok(png.readUInt32BE(16) >= 128, `${icon} is at least 128 px`);
   }
 
-  // Claude Code slash commands each say what they do.
-  for (const command of ['catch-up', 'inbox', 'feed', 'post', 'algorithm', 'follow']) assert.match(text(`commands/${command}.md`), /^---\ndescription: .+\n/, command);
 
   // MCP Registry entries, one per server, under the openmedia.site namespace.
   for (const [key, url] of Object.entries(expected)) {
@@ -63,4 +92,19 @@ test('every marketplace manifest describes one plugin, with the same servers and
     assert.ok((entry as unknown as { description: string }).description.length <= 100, 'the MCP Registry caps descriptions at 100 characters');
     assert.deepEqual(entry.remotes, [{ type: 'streamable-http', url }]);
   }
+});
+
+test('the plugin ships exactly the slash commands in agentSkills.ts, and every skill has one', () => {
+  const folder = join(__dirname, '..', '..', 'agent-plugin', 'commands');
+  const commands = agentCommands();
+  assert.deepEqual(readdirSync(folder).filter((file) => file.endsWith('.md')).sort(), commands.map((command) => `${command.name}.md`).sort(), 'run npm run agent-plugin:sync');
+  for (const command of commands) {
+    const file = readFileSync(join(folder, `${command.name}.md`), 'utf8');
+    assert.equal(file, commandMarkdown(command), `run npm run agent-plugin:sync (${command.name})`);
+    assert.match(file, /^---\ndescription: [^\n]+\nargument-hint: "[^"\n]*"\n---\n/, command.name);
+    assert.match(command.name, /^[a-z][a-z-]*$/);
+  }
+  const skills = new Set(agentSkills().map((skill) => skill.name));
+  for (const command of commands) assert.ok(skills.has(command.skill), `${command.name} names a real skill (${command.skill})`);
+  for (const skill of skills) assert.ok(commands.some((command) => command.skill === skill), `skill ${skill} has a slash command`);
 });

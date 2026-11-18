@@ -16,10 +16,13 @@ One inbox, organised by person rather than by app. Everything here needs the per
 
 ## Steps
 
-1. Read: `list_conversations` (Open Media chats, each with `unread` and, on the person's own messages, `receipt`: sent, delivered or read, with `readAt`), `list_email`, and `list_bridged_chats`. Summarise by person, newest first, and say which channel each came from.
+1. Read: `list_conversations` (Open Media chats, each with `unread` and, on the person's own messages, `receipt`: sent, delivered or read, with `readAt`), `list_email`, and `list_bridged_chats`. Summarise by person, newest first, and say which channel each came from. `get_conversation_messages` pages back through one conversation (`before` a message id or time).
 2. Contacts: `list_my_contacts`, then `save_contacts` to add or edit (emails, phones, network handles). A saved name is how a person appears everywhere, including email.
 3. Reply: draft the exact text, show it, and send only after the person agrees, with `send_message`, `send_email` or `send_bridged_message` on the channel they last used unless they say otherwise.
-4. Mark read only when the person has actually seen it: `mark_conversation_read`.
+4. Mark read only when the person has actually seen it: `mark_conversation_read`, `mark_email_read` (message ids from `list_email`) or `mark_bridged_chat_read` (up to an event id). `mark_conversation_unread`, `mark_email_read` with `unread: true` and `mark_bridged_chat_read` with `read: false` bring something back as unread.
+   - Reply to one message with `send_message` and `replyTo` (an id from `get_conversation_messages`); `react_to_message` adds or removes an emoji reaction. Both are seen by the other person: confirm first.
+   - New contact on Open Media? `find_people` searches handles and shown names; `find_contacts_on_open_media` checks contacts' emails and phone numbers.
+   - Connecting accounts: `connect_mailbox` (an app password, never the main one), `sync_mailbox`, `remove_mailbox`; chat apps through `list_chat_networks`, `chat_network_sign_in_options`, `start_chat_network_sign_in`, `continue_chat_network_sign_in`, `cancel_chat_network_sign_in` and `disconnect_chat_network`. Tell the person first that chat networks do not approve bridges.
 5. Read receipts are reciprocal: `set_read_receipts` false hides theirs and others'. Confirm before changing it. Delivered always shows; email only ever says Sent, because email has no reliable read signal and Open Media never uses tracking pixels.
 6. Open Media AI is the first conversation in their Messages: one chat for every AI model they use, with their AI searches in it. `get_ai_chat` reads it and `ask_ai` adds a message (the free built-in model answers unless they saved a key or the text names a model, such as "@claude …"). Never paste API keys for the person; they add their own in Settings → Open Media AI.
 
