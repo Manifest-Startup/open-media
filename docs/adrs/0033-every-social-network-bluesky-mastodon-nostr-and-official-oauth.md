@@ -61,8 +61,10 @@ No new buttons (owner rule). The existing screens got clearer:
 - The Mastodon reading server (`mas.to`) is one server's view of the fediverse. If it stops allowing anonymous reads, switch `mastodonReadingServer`.
 - Nostr reads open WebSockets to four relays from the browser. Agents' feed calls do the same from the Worker, and a relay that can't be reached is skipped.
 
+- **LinkedIn API versions** (2026-11-24): LinkedIn retires each `LinkedIn-Version` about a year after release and then answers 426. The first pin, 202510, was retired on 2026-10-15, so posting would have failed. The default is now 202611 (retired around November 2027); the Worker variable `LINKEDIN_API_VERSION` (YYYYMM) overrides it without a new build. LinkedIn posts now keep hashtags as real hashtags (`{hashtag|\#|tag}`), leave links unescaped so LinkedIn links them, and add a video as a link to Open Media's copy.
+
 ## Owner steps
 
-1. Register Open Media's apps and set the Worker secrets above. Each network's redirect URL is `https://openmedia.site/v1/social/<network>/callback`. X needs a paid API tier for posting volume beyond the free limit. Threads, Instagram and Facebook need Meta app review. LinkedIn needs the "Share on LinkedIn" product.
+1. Register Open Media's apps and set the Worker secrets above. Each network's redirect URL is `https://openmedia.site/v1/social/<network>/callback`. X needs a paid API tier for posting volume beyond the free limit. Threads, Instagram and Facebook need Meta app review. LinkedIn needs the "Share on LinkedIn" and "Sign In with LinkedIn using OpenID Connect" products (both self-serve) on an app tied to a LinkedIn Page.
 2. Try each open network with a real account: a Bluesky app password, a Mastodon account, and a Nostr signer app.
 3. Phones: new build, then check the `openmedia://oauth` return and the Nostr signer deep link.

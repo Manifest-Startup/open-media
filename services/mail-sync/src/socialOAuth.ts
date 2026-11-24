@@ -18,6 +18,8 @@ export interface SocialOAuthEnv {
   LINKEDIN_CLIENT_ID?: string; LINKEDIN_CLIENT_SECRET?: string;
   INSTAGRAM_APP_ID?: string; INSTAGRAM_APP_SECRET?: string;
   FACEBOOK_APP_ID?: string; FACEBOOK_APP_SECRET?: string;
+  /** Optional override of the LinkedIn API version (YYYYMM), so a version bump needs no new build. */
+  LINKEDIN_API_VERSION?: string;
   CONVO_APP_ORIGIN: string;
 }
 
@@ -31,7 +33,17 @@ const credentialNames: Record<SocialNetwork, [keyof SocialOAuthEnv, keyof Social
 
 const names: Record<SocialNetwork, string> = { x: 'X', threads: 'Threads', linkedin: 'LinkedIn', instagram: 'Instagram', facebook: 'Facebook' };
 const graphVersion = 'v23.0';
-const linkedInVersion = '202510';
+/**
+ * LinkedIn retires each API version about a year after release and then answers 426
+ * (202510 was retired on 2026-10-15). Bump this, or set LINKEDIN_API_VERSION, before it lapses:
+ * https://learn.microsoft.com/linkedin/marketing/versioning
+ */
+export const defaultLinkedInVersion = '202611';
+
+export function linkedInVersion(env?: Pick<SocialOAuthEnv, 'LINKEDIN_API_VERSION'>): string {
+  const override = env?.LINKEDIN_API_VERSION?.trim();
+  return override && /^20\d{2}(0[1-9]|1[0-2])$/.test(override) ? override : defaultLinkedInVersion;
+}
 
 export function isSocialNetwork(value: string): value is SocialNetwork {
   return (socialNetworks as string[]).includes(value);
@@ -119,6 +131,7 @@ async function call<T>(fetcher: Fetcher, network: SocialNetwork, url: string, in
   let body: unknown = {};
   try { body = text ? JSON.parse(text) : {}; } catch { body = {}; }
   if (response.status === 401) throw new UserFacingError(`Your ${names[network]} sign-in ended. Connect ${names[network]} again in Settings → Cross-posting.`);
+  if (response.status === 426) throw new UserFacingError(`${names[network]} needs Open Media to update how it connects. Try again later.`);
   if (response.status === 429) throw new UserFacingError(`${names[network]} is limiting posts right now. Try again later.`);
   if (!response.ok) {
     const record = body as { error?: { message?: string } | string; detail?: string; message?: string; error_description?: string };
@@ -190,7 +203,7 @@ export interface SocialPostInput { text: string; videoUrl?: string }
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export async function publishSocial(network: SocialNetwork, session: SocialSession, post: SocialPostInput, fetcher: Fetcher = fetch): Promise<{ externalId: string; url?: string }> {
+export async function publishSocial(network: SocialNetwork, session: SocialSession, post: SocialPostInput, fetcher: Fetcher = fetch, env?: Pick<SocialOAuthEnv, 'LINKEDIN_API_VERSION'>): Promise<{ externalId: string; url?: string }> {
   const text = post.text.slice(0, 63_206);
   switch (network) {
     case 'x': {
@@ -206,8 +219,8 @@ export async function publishSocial(network: SocialNetwork, session: SocialSessi
     case 'linkedin': {
       const created = await call(fetcher, network, 'https://api.linkedin.com/rest/posts', {
         method: 'POST',
-        headers: { authorization: `Bearer ${session.token}`, 'content-type': 'application/json', 'LinkedIn-Version': linkedInVersion, 'X-Restli-Protocol-Version': '2.0.0' },
-        body: JSON.stringify({ author: `urn:li:person:${session.accountId}`, commentary: escapeLinkedIn(text), visibility: 'PUBLIC', distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] }, lifecycleState: 'PUBLISHED', isReshareDisabledByAuthor: false }),
+        headers: { authorization: `Bearer ${session.token}`, 'content-type': 'application/json', 'LinkedIn-Version': linkedInVersion(env), 'X-Restli-Protocol-Version': '2.0.0' },
+        body: JSON.stringify({ author: `urn:li:person:${session.accountId}`, commentary: linkedInCommentary(text, post.videoUrl), visibility: 'PUBLIC', distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] }, lifecycleState: 'PUBLISHED', isReshareDisabledByAuthor: false }),
       });
       const urn = created.headers.get('x-restli-id') ?? '';
       return { externalId: urn, url: urn ? `https://www.linkedin.com/feed/update/${encodeURIComponent(urn)}/` : undefined };
@@ -238,6 +251,19 @@ export async function publishSocial(network: SocialNetwork, session: SocialSessi
 /** LinkedIn's "little text" format treats these characters as markup unless escaped. */
 export function escapeLinkedIn(text: string): string {
   return text.replace(/[\\|{}@[\]()<>#*_~]/g, (char) => `\\${char}`);
+}
+
+const linkedInMarkup = /(^|[\s(])#([\p{L}\p{N}_]+)|([\\|{}@[\]()<>#*_~])/gu;
+
+/**
+ * A post's text in LinkedIn's "little text" format: markup characters escaped, hashtags kept as
+ * real hashtags, links left as they are so LinkedIn links them, and a video as a link to Open
+ * Media's copy (this integration posts text only).
+ */
+export function linkedInCommentary(text: string, videoUrl?: string): string {
+  const full = videoUrl && !text.includes(videoUrl) ? `${text.trimEnd()}${text.trim() ? '\n\n' : ''}${videoUrl}` : text;
+  return full.split(/(https?:\/\/[^\s]+[^\s).,!?:;'"’”])/g).map((part, index) => index % 2 === 1 ? part : part.replace(linkedInMarkup, (_match, before: string | undefined, tag: string | undefined, char: string | undefined) =>
+    tag !== undefined ? `${escapeLinkedIn(before ?? '')}{hashtag|\\#|${escapeLinkedIn(tag)}}` : `\\${char}`)).join('');
 }
 
 export function parseSession(value: unknown): SocialSession {

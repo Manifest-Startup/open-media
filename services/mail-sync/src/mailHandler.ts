@@ -287,7 +287,7 @@ export async function handleMailRequest(request: Request, env: MailEnv): Promise
       if (!await allowed(env.MAIL_SEND_RATE_LIMITER, session.userId)) return rateLimited(headers);
       let current = parseSession(body?.session);
       if (current.expiresAt && current.expiresAt < Date.now() + 60_000) current = await refreshSession(network, env, current);
-      const published = await publishSocial(network, current, parsePost(body?.post));
+      const published = await publishSocial(network, current, parsePost(body?.post), fetch, env);
       return json(201, { ...published, session: current }, headers);
     }
 
