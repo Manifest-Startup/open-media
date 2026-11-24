@@ -224,7 +224,7 @@ Everything Open Media does for people, it also offers to programs and AI assista
 
 The [agent-plugin](agent-plugin) folder is one plugin for Claude Code, Codex, VS Code, GitHub Copilot, Cursor, Kiro, Antigravity, Gemini CLI and the official MCP Registry. It bundles:
 <!-- generated:plugin-summary (npm run agent-plugin:sync) -->
-- three MCP servers (141 tools);
+- three MCP servers (146 tools);
 - 11 skills;
 - 17 slash commands (`/open-media:algorithm`, `catch-up`, `feed`, `follow`, `inbox`, `post`, `profile`, `people`, `settings`, `ask`, `connect`, `events`, `jobs`, `sell`, `pay`, `translate`, `verify`);
 - one visual view that shows posts, your inbox with read receipts, your algorithm and its code, events and profiles the way the app looks.
