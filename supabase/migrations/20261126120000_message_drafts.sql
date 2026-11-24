@@ -14,10 +14,10 @@ create table if not exists public.message_drafts (
   -- The app's own reference (a goal step id, say), so the same draft is updated, not duplicated.
   external_ref text check (external_ref is null or char_length(external_ref) between 1 and 200),
   status text not null default 'draft' check (status in ('draft', 'sent')),
+  -- The message it became. Null again if that message is later deleted; the draft stays 'sent'.
   sent_message_id uuid references public.messages(id) on delete set null,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint message_drafts_sent_has_message check (status = 'draft' or sent_message_id is not null)
+  updated_at timestamptz not null default now()
 );
 
 create index if not exists message_drafts_owner_idx on public.message_drafts (owner_id, status, updated_at desc);

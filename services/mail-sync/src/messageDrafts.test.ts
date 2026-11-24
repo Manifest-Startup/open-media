@@ -14,7 +14,8 @@ function fakeDatabase() {
   const messages: Record<string, any>[] = [];
   const calls: { method: string; url: string }[] = [];
   const filters = (url: URL) => [...url.searchParams].filter(([key, value]) => !['select', 'order', 'limit', 'on_conflict'].includes(key) && value.startsWith('eq.')).map(([key, value]) => [key, decodeURIComponent(value.slice(3))]);
-  const match = (row: Record<string, any>, url: URL) => filters(url).every(([key, value]) => String(row[key]) === value);
+  const match = (row: Record<string, any>, url: URL) => filters(url).every(([key, value]) => String(row[key]) === value)
+    && [...url.searchParams].every(([key, value]) => !value.startsWith('lt.') || String(row[key]) < decodeURIComponent(value.slice(3)));
   const fetch = (async (input: string, init?: RequestInit) => {
     const url = new URL(input);
     const method = init?.method ?? 'GET';
@@ -40,7 +41,9 @@ function fakeDatabase() {
       const hits = drafts.filter((row) => match(row, url));
       if (method === 'PATCH') { hits.forEach((row) => Object.assign(row, body)); return Response.json(hits); }
       if (method === 'DELETE') { hits.forEach((row) => drafts.splice(drafts.indexOf(row), 1)); return Response.json(hits.map(({ id }) => ({ id }))); }
-      return Response.json(hits);
+      const sorted = hits.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+      const limit = Number(url.searchParams.get('limit') ?? sorted.length);
+      return Response.json(sorted.slice(0, limit));
     }
     return Response.json([]);
   }) as typeof globalThis.fetch;
@@ -114,4 +117,27 @@ test('every draft route is documented as account-only', () => {
   for (const [path, verbs] of [['/v1/me/drafts', ['get']], ['/v1/me/conversations/{id}/drafts', ['post']], ['/v1/me/drafts/{id}', ['patch', 'delete']], ['/v1/me/drafts/{id}/send', ['post']]] as const) {
     for (const verb of verbs) assert.ok(paths[path]?.[verb]?.security, `${verb} ${path}`);
   }
+});
+
+test('every unsent draft can be reached, page by page', async () => {
+  await withAccount(async (account, db) => {
+    for (let i = 0; i < 5; i++) await account.saveDraft(conversation, `Draft ${i}`);
+    db.drafts.forEach((row, i) => { row.updated_at = new Date(Date.UTC(2026, 10, 1, 0, i)).toISOString(); });
+    const seen: string[] = [];
+    let before: string | null | undefined;
+    do {
+      const page = await account.drafts(undefined, { limit: 2, before: before ?? undefined });
+      seen.push(...page.drafts.map((d) => d.text));
+      before = page.next_before;
+    } while (before);
+    assert.deepEqual(seen, ['Draft 4', 'Draft 3', 'Draft 2', 'Draft 1', 'Draft 0']);
+    await assert.rejects(account.drafts(undefined, { limit: 500 }), /limit/);
+    await assert.rejects(account.drafts(undefined, { before: 'soon' }), /ISO time/);
+  });
+});
+
+test('an account export fails loudly rather than leave the drafts out', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string) => String(input).includes('/rpc/') ? Response.json({ formatVersion: 3 }) : Response.json({ message: 'database is restarting' }, { status: 503 })) as typeof fetch;
+  try { await assert.rejects(new Account(env, 'person-token', person, origin).exportData(), /restarting/); } finally { globalThis.fetch = realFetch; }
 });
