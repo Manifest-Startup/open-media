@@ -68,12 +68,12 @@ test('LinkedIn commentary escapes its markup characters', () => {
   assert.equal(escapeLinkedIn('Hi (team) #launch @me'), 'Hi \\(team\\) \\#launch \\@me');
 });
 
-test('LinkedIn hashtags stay hashtags, links stay links, and a video goes as a link', () => {
+test('LinkedIn hashtags stay hashtags, links are escaped too, and a video goes as a link', () => {
   assert.equal(linkedInCommentary('Launch day (finally) #Build_2026 with @team'), 'Launch day \\(finally\\) {hashtag|\\#|Build\\_2026} with \\@team');
   assert.equal(linkedInCommentary('C# and a#b are not hashtags'), 'C\\# and a\\#b are not hashtags');
-  assert.equal(linkedInCommentary('Read https://example.com/a_b(1)?q=*x.'), 'Read https://example.com/a_b(1)?q=*x.');
-  assert.equal(linkedInCommentary('(see https://openmedia.site/p/1)'), '\\(see https://openmedia.site/p/1\\)');
-  assert.equal(linkedInCommentary('New clip', 'https://openmedia.site/v/abc_1'), 'New clip\n\nhttps://openmedia.site/v/abc_1');
+  assert.equal(linkedInCommentary('Read https://example.com/a_b(1)?q=*x.'), 'Read https://example.com/a\\_b\\(1\\)?q=\\*x.');
+  assert.equal(linkedInCommentary('https://example.com/#top'), 'https://example.com/\\#top');
+    assert.equal(linkedInCommentary('New clip', 'https://openmedia.site/v/abc_1'), 'New clip\n\nhttps://openmedia.site/v/abc\\_1');
   assert.equal(linkedInCommentary('', 'https://openmedia.site/v/abc'), 'https://openmedia.site/v/abc');
   assert.equal(linkedInCommentary('Watch https://openmedia.site/v/abc', 'https://openmedia.site/v/abc'), 'Watch https://openmedia.site/v/abc');
 });

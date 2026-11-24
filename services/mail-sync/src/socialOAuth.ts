@@ -256,14 +256,14 @@ export function escapeLinkedIn(text: string): string {
 const linkedInMarkup = /(^|[\s(])#([\p{L}\p{N}_]+)|([\\|{}@[\]()<>#*_~])/gu;
 
 /**
- * A post's text in LinkedIn's "little text" format: markup characters escaped, hashtags kept as
- * real hashtags, links left as they are so LinkedIn links them, and a video as a link to Open
- * Media's copy (this integration posts text only).
+ * A post's text in LinkedIn's "little text" format: every reserved character escaped, links
+ * included (LinkedIn requires it and still links them), hashtags kept as real hashtags, and a
+ * video as a link to Open Media's copy (this integration posts text only).
  */
 export function linkedInCommentary(text: string, videoUrl?: string): string {
   const full = videoUrl && !text.includes(videoUrl) ? `${text.trimEnd()}${text.trim() ? '\n\n' : ''}${videoUrl}` : text;
-  return full.split(/(https?:\/\/[^\s]+[^\s).,!?:;'"’”])/g).map((part, index) => index % 2 === 1 ? part : part.replace(linkedInMarkup, (_match, before: string | undefined, tag: string | undefined, char: string | undefined) =>
-    tag !== undefined ? `${escapeLinkedIn(before ?? '')}{hashtag|\\#|${escapeLinkedIn(tag)}}` : `\\${char}`)).join('');
+  return full.replace(linkedInMarkup, (_match, before: string | undefined, tag: string | undefined, char: string | undefined) =>
+    tag !== undefined ? `${escapeLinkedIn(before ?? '')}{hashtag|\\#|${escapeLinkedIn(tag)}}` : `\\${char}`);
 }
 
 export function parseSession(value: unknown): SocialSession {
