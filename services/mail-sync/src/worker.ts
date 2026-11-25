@@ -10,7 +10,7 @@ import { handleMailRequest, MailEnv } from './mailHandler.js';
 import { handleOndcRequest, isOndcPath, OndcEnv } from './ondc/http.js';
 import { handleWebAppRequest, WebAppEnv } from './webApp.js';
 import { AuthEmailEnv, handleSendEmailHook } from './authEmail.js';
-import { withSecurityHeaders } from './securityHeaders.js';
+import { httpsRedirect, withSecurityHeaders } from './securityHeaders.js';
 import { PublicApiEnv, withinLimit } from './publicApi.js';
 import { MarketplaceEnv, runMarketplaceJobs } from './marketplace.js';
 import { connectedNotFound, connectedPrefix, connectedRequest, connectedResponse } from './appIntegrations.js';
@@ -144,6 +144,8 @@ async function handleRequest(request: Request, env: WorkerEnv, ctx: ExecutionCon
 export default {
   fetch: async (request: Request, env: WorkerEnv, ctx: ExecutionContext) => {
     signInEnv ??= env;
+    const insecure = httpsRedirect(request);
+    if (insecure) return withSecurityHeaders(insecure);
     const response = await handleRequest(request, env, ctx);
     // The web app's own responses already carry their policy; everything else gets the common set.
     return response.headers.has('content-security-policy') ? response : withSecurityHeaders(response);

@@ -109,3 +109,16 @@ export async function withSecurityHeaders(response: Response, options: { webApp?
   headers.delete('content-length');
   return new Response(body, { status: response.status, statusText: response.statusText, headers });
 }
+
+/**
+ * Plain HTTP on a public Open Media host moves to HTTPS before anything is served, so a first
+ * visit can't be read or changed on the way (HSTS only protects visits after the first).
+ * Local development (localhost, 127.0.0.1) keeps working over HTTP.
+ */
+export function httpsRedirect(request: Request): Response | undefined {
+  const url = new URL(request.url);
+  if (url.protocol !== 'http:' || !/(^|\.)openmedia\.site$/i.test(url.hostname)) return undefined;
+  url.protocol = 'https:';
+  const status = request.method === 'GET' || request.method === 'HEAD' ? 301 : 308;
+  return new Response(null, { status, headers: { location: url.toString(), 'cache-control': 'public, max-age=86400' } });
+}

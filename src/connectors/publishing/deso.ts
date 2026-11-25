@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as WebBrowser from 'expo-web-browser';
 import { Platform } from 'react-native';
 
+import { deviceSecretStorage } from '../../auth/supabase';
 import { CrossPostVideo } from '../../domain/crossPosting';
 import { videoExtension } from '../../domain/postVideo';
 import { prepareNativeCrypto } from './nativeCrypto';
@@ -12,7 +13,8 @@ import { NetworkAccount, PublishingConnector, PublishingError } from './types';
  * reposts) and likes, and can spend at most 0.01 DESO in fees. The key is created in this browser and never sent anywhere. Videos are uploaded
  * through DeSo's media API (which stores them with Livepeer) and attached as VideoURLs. On iOS and
  * Android, DeSo Identity opens in a secure in-app browser (an auth session) and returns to
- * `openmedia://deso-auth`; the derived key is then kept in the app's storage.
+ * `openmedia://deso-auth`; the derived key is then kept in the Keychain/Keystore (this device
+ * only), never in plain app storage.
  */
 const accountKey = 'open-media.network.deso';
 const nodeURI = 'https://node.deso.org';
@@ -23,6 +25,40 @@ let cancelNativeLogin: ((reason: Error) => void) | undefined;
 type DesoSdk = typeof import('deso-protocol');
 let sdk: Promise<DesoSdk> | undefined;
 
+/**
+ * DeSo Identity's state includes the derived key's signing seed, so on phones it lives in the
+ * Keychain/Keystore. Values an older version left in AsyncStorage move over
+ * the first time they are read, and the plain copy is removed.
+ */
+const desoIdentityKeys = ['desoActivePublicKey', 'desoIdentityUsers', 'desoLoginKeyPair'];
+
+function desoSecretStorage() {
+  const secure = deviceSecretStorage();
+  return {
+    async getItem(key: string) {
+      const value = await secure.getItem(key);
+      if (value != null) return value;
+      const legacy = await AsyncStorage.getItem(key);
+      if (legacy == null) return null;
+      await secure.setItem(key, legacy);
+      await AsyncStorage.removeItem(key);
+      return legacy;
+    },
+    async setItem(key: string, value: string) {
+      await secure.setItem(key, value);
+      await AsyncStorage.removeItem(key);
+    },
+    async removeItem(key: string) {
+      await secure.removeItem(key);
+      await AsyncStorage.removeItem(key);
+    },
+    /** Only DeSo's own keys, never the Open Media session kept in the same secure store. */
+    async clear() {
+      for (const key of desoIdentityKeys) await this.removeItem(key);
+    },
+  };
+}
+
 /** Loaded on first use so the SDK isn't evaluated unless someone connects DeSo. */
 function desoSdk() {
   sdk ??= prepareNativeCrypto().then(() => import('deso-protocol')).then((module) => {
@@ -32,7 +68,7 @@ function desoSdk() {
       nodeURI,
       ...(native ? {
         redirectURI: nativeRedirectURI,
-        storageProvider: AsyncStorage,
+        storageProvider: desoSecretStorage(),
         identityPresenter: async (url: string) => {
           const result = await WebBrowser.openAuthSessionAsync(url, nativeRedirectURI);
           if (result.type === 'success') module.identity.handleRedirectURI(result.url);

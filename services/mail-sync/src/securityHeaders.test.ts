@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 
-import { pagePolicy, webAppPolicy, withSecurityHeaders } from './securityHeaders.js';
+import { httpsRedirect, pagePolicy, webAppPolicy, withSecurityHeaders } from './securityHeaders.js';
 
 test('every response gets HSTS, nosniff and no framing, without touching JSON or streams', async () => {
   const json = await withSecurityHeaders(new Response('{"a":1}', { status: 201, headers: { 'content-type': 'application/json' } }));
@@ -43,4 +43,14 @@ test('the sign-in gateway runs no third-party scripts and connects only to Open 
   assert.ok(policy.includes("connect-src 'self' https://db.example.supabase.co https://api.openmedia.site;"));
   assert.ok(policy.includes("frame-src 'none'") && policy.includes("frame-ancestors 'none'") && policy.includes("base-uri 'none'"));
   assert.equal(response.headers.get('cache-control'), 'no-store');
+});
+
+test('plain HTTP on openmedia.site moves to HTTPS; local development does not', () => {
+  const get = httpsRedirect(new Request('http://openmedia.site/feed?x=1'));
+  assert.equal(get?.status, 301);
+  assert.equal(get?.headers.get('location'), 'https://openmedia.site/feed?x=1');
+  assert.equal(httpsRedirect(new Request('http://api.openmedia.site/v1/me', { method: 'POST' }))?.status, 308);
+  assert.equal(httpsRedirect(new Request('https://openmedia.site/')), undefined);
+  assert.equal(httpsRedirect(new Request('http://localhost:8787/')), undefined);
+  assert.equal(httpsRedirect(new Request('http://notopenmedia.site/')), undefined);
 });

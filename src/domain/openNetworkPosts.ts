@@ -161,7 +161,7 @@ export function socialPostFromMastodon(status: MastodonStatus, readingServer: st
 export function mastodonServer(input: string): string | undefined {
   const text = input.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
   const host = text.includes('@') ? text.split('@').filter(Boolean).pop()! : text;
-  return /^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host) && !/^(localhost|.*\.local)$/.test(host) ? host : undefined;
+  return /^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host) && !/(^|\.)(localhost|local|internal|intranet|lan|home|corp|home\.arpa)$/.test(host) ? host : undefined;
 }
 
 // ---------- Nostr ----------
