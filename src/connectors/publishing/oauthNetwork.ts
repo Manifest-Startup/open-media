@@ -2,7 +2,8 @@ import { sha256 } from '@noble/hashes/sha256';
 import { getRandomValues } from 'expo-crypto';
 import { Platform } from 'react-native';
 
-import { deviceSecretStorage, getAPIAccessToken } from '../../auth/supabase';
+import { networkSecretStorage } from '../../auth/networkSecretStorage';
+import { currentUserId, getAPIAccessToken } from '../../auth/supabase';
 import { destinationNames, OAuthNetworkId } from '../../domain/crossPosting';
 import { runOAuthWindow } from './oauthWindow';
 import { NetworkAccount, PublishAvailability, PublishingConnector, PublishingError } from './types';
@@ -12,12 +13,12 @@ import { NetworkAccount, PublishAvailability, PublishingConnector, PublishingErr
  * Open Media's server holds only its own app secret and passes requests through; the person's
  * token is kept on this device, like every other network's key.
  */
-interface StoredSession { token: string; refreshToken?: string; expiresAt?: number; accountId: string; handle: string; profileURL?: string }
+interface StoredSession { token: string; refreshToken?: string; expiresAt?: number; accountId: string; handle: string; profileURL?: string; /** The Open Media user who connected it; no one else may use it. */ owner?: string }
 
 const what: Record<OAuthNetworkId, string> = {
   x: 'Open Media can post and like for you. It can’t read your DMs or change your account.',
   threads: 'Open Media can publish threads for you. It can’t read your messages or change your account.',
-  linkedin: 'Open Media can share posts as you. It can’t read your messages, connections or profile changes.',
+  linkedin: 'Open Media can share the posts you choose to your LinkedIn, publicly. LinkedIn gives Open Media your name and member ID, which stay on this device with the sign-in. Open Media can’t read your messages, connections or feed. Disconnect any time in Settings → Cross-posting.',
   instagram: 'Open Media can publish Reels to your professional account. It can’t read your DMs.',
   facebook: 'Open Media can post to a Facebook Page you manage (Facebook doesn’t allow apps to post to personal profiles).',
 };
@@ -64,8 +65,12 @@ export function oauthPublisher(id: OAuthNetworkId): PublishingConnector {
   const storageKey = `open-media.network.${id}`;
   const load = async (): Promise<StoredSession | undefined> => {
     try {
-      const stored = JSON.parse((await deviceSecretStorage().getItem(storageKey)) ?? 'null') as StoredSession | null;
-      return stored?.token && stored.accountId ? stored : undefined;
+      const stored = JSON.parse((await networkSecretStorage().getItem(storageKey)) ?? 'null') as StoredSession | null;
+      if (!stored?.token || !stored.accountId) return undefined;
+      // A connection belongs to the Open Media account that made it, never to whoever uses this device next.
+      const owner = await currentUserId();
+      if (!owner || stored.owner !== owner) { await networkSecretStorage().removeItem(storageKey); return undefined; }
+      return stored;
     } catch { return undefined; }
   };
   const toAccount = (stored: StoredSession): NetworkAccount => ({ network: id, handle: stored.handle, profileURL: stored.profileURL });
@@ -91,21 +96,24 @@ export function oauthPublisher(id: OAuthNetworkId): PublishingConnector {
       const redirect = await runOAuthWindow(url, state, { title: `Approve Open Media on ${name}`, message: what[id] }, { showApproval, signal });
       const code = redirect.searchParams.get('code');
       if (!code) throw new PublishingError(redirect.searchParams.get('error') === 'access_denied' ? `You chose not to connect ${name}.` : `${name} didn’t finish signing in. Try again.`);
-      const session = await server<StoredSession>(`/v1/social/${id}/token`, { code, verifier });
-      await deviceSecretStorage().setItem(storageKey, JSON.stringify(session));
+      const owner = await currentUserId();
+      if (!owner) throw new PublishingError('Sign in to Open Media first.');
+      const session = { ...await server<StoredSession>(`/v1/social/${id}/token`, { code, verifier }), owner };
+      await networkSecretStorage().setItem(storageKey, JSON.stringify(session));
       return toAccount(session);
     },
 
     async disconnect() {
-      await deviceSecretStorage().removeItem(storageKey);
+      await networkSecretStorage().removeItem(storageKey);
     },
 
     async publish(content) {
       const stored = await load();
       if (!stored) throw new PublishingError(`Connect ${name} in Settings → Cross-posting.`);
-      const result = await server<{ externalId: string; url?: string; session?: StoredSession }>(`/v1/social/${id}/publish`, { session: stored, post: { text: content.text, videoUrl: content.video?.url } });
+      const { owner, ...session } = stored;
+      const result = await server<{ externalId: string; url?: string; session?: StoredSession }>(`/v1/social/${id}/publish`, { session, post: { text: content.text, videoUrl: content.video?.url } });
       // X tokens are refreshed on the way; keep the new one.
-      if (result.session && result.session.token !== stored.token) await deviceSecretStorage().setItem(storageKey, JSON.stringify(result.session));
+      if (result.session && result.session.token !== stored.token) await networkSecretStorage().setItem(storageKey, JSON.stringify({ ...result.session, owner }));
       return { externalId: result.externalId, url: result.url };
     },
 

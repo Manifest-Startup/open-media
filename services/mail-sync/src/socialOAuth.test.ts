@@ -125,3 +125,8 @@ test('an expired LinkedIn sign-in without a refresh token asks to reconnect', as
   const fetcher = (async () => new Response(JSON.stringify({ message: 'gone' }), { status: 426 })) as unknown as typeof fetch;
   await assert.rejects(publishSocial('linkedin', { token: 't', accountId: 'a', handle: 'A' }, { text: 'hi' }, fetcher), /LinkedIn needs Open Media to update/);
 });
+
+test('LinkedIn length is checked after escaping, with a plain message', async () => {
+  const fetcher = (async () => { throw new Error('must not be called'); }) as unknown as typeof fetch;
+  await assert.rejects(publishSocial('linkedin', { token: 't', accountId: 'a', handle: 'A' }, { text: '(x) '.repeat(700) }, fetcher), /up to 3,000 characters/);
+});

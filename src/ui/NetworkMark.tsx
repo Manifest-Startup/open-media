@@ -21,6 +21,8 @@ const glyphs: Record<string, React.ComponentProps<typeof Ionicons>['name']> = {
   matrix: 'git-network-outline', 'ai-chat': 'sparkles-outline',
 };
 
+const brandLockedMarks = new Set(['linkedin', 'linkedin-official']);
+
 const letters: Record<string, string> = {
   bluesky: 'b', nostr: 'n', farcaster: 'f', lens: 'l', hive: 'h', deso: 'd', signal: 's', telegram: 't', imessage: 'i',
 };
@@ -29,7 +31,9 @@ export function NetworkMark({ id, name, size = 36, muted }: { id: string; name: 
   const { colors } = useOpenMediaTheme();
   const styles = useThemedStyles(createStyles);
   const glyph = glyphs[id];
-  const color = muted ? colors.textTertiary : colors.text;
+  // LinkedIn allows its mark only unaltered, in black or white on a plain background (brand.linkedin.com/in-logo),
+  // so it is never greyed out; a waiting state shows on the tile instead.
+  const color = muted && !brandLockedMarks.has(id) ? colors.textTertiary : colors.text;
   return <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.tile, { width: size, height: size, borderRadius: Math.round(size * 0.3) }, muted && styles.mutedTile]}>
     {glyph
       ? <Ionicons name={glyph} size={Math.round(size * 0.5)} color={color} />

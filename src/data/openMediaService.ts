@@ -9,7 +9,7 @@ import { applyReceipts, unreadCount } from "../domain/receipts";
 import { appContextOf } from "../domain/appContext";
 import { isEmptyProfessional, parseProfessional, ProfessionalProfile, toJsonResume } from "../domain/professionalProfile";
 import { ProfileFieldValue, validateProfileFields } from "../domain/profileFields";
-import { getSupabaseClient } from "../auth/supabase";
+import { clearNetworkSessions, getSupabaseClient } from "../auth/supabase";
 
 export interface OpenMediaProfile {
   id: string;
@@ -164,6 +164,7 @@ export async function deleteCurrentAccount(): Promise<void> {
   const { error } = await client.rpc("open_media_delete_account");
   if (error) throw error;
   await client.auth.signOut({ scope: "local" });
+  await clearNetworkSessions();
 }
 
 export async function exportCurrentAccountData(): Promise<

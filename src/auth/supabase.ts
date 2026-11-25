@@ -5,6 +5,7 @@ import { AppState, Platform } from 'react-native';
 import { createClient, processLock, SupabaseClient, SupportedStorage } from '@supabase/supabase-js';
 
 import { createAuthRedirectURL, parseAuthCallbackURL, signInEmailsIncludeCode } from '../domain/authCallback';
+import { isNetworkSessionKey, networkSessionKeys } from '../domain/networkSessionKeys';
 import { signInEmailError } from '../domain/signInErrors';
 
 let client: SupabaseClient | undefined;
@@ -74,11 +75,34 @@ export async function sendSignInLink(email: string): Promise<void> {
   if (error) throw signInEmailError(error);
 }
 
+/** The signed-in person's Open Media user ID, read from the saved session (no network call). */
+export async function currentUserId(): Promise<string | undefined> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return undefined;
+  const { data } = await supabase.auth.getSession();
+  return data.session?.user.id;
+}
+
+/**
+ * Removes every network connection and cross-post record kept on this device, so the next person
+ * who signs in here can't post as the last one. Runs on sign-out and on account deletion.
+ */
+export async function clearNetworkSessions(): Promise<void> {
+  const secure = deviceSecretStorage();
+  const plainKeys = (await AsyncStorage.getAllKeys().catch(() => [] as readonly string[])).filter(isNetworkSessionKey);
+  const keys = [...new Set([...networkSessionKeys, ...plainKeys])];
+  await Promise.all([
+    AsyncStorage.multiRemove(keys).catch(() => undefined),
+    ...(secure === AsyncStorage ? [] : keys.map((key) => Promise.resolve(secure.removeItem(key)).catch(() => undefined))),
+  ]);
+}
+
 export async function signOut(): Promise<void> {
   const supabase = getSupabaseClient();
   if (!supabase) return;
   const { error } = await supabase.auth.signOut();
   if (error) throw error;
+  await clearNetworkSessions();
 }
 
 /**

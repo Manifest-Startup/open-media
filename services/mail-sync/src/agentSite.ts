@@ -482,6 +482,14 @@ This page describes how Open Media handles data, based on how the app and this A
 - Payments go through Stripe or the person's own wallet. Open Media never stores card numbers, bank details, seed phrases or private keys.
 - The feed is never ranked on private messages, ID documents, precise location or inferred sensitive traits, and every ranked post explains itself with "Why this?".
 
+## Sharing to other networks
+
+When you connect another network in Settings → Cross-posting, Open Media can copy the posts you choose there. You pick the networks for every post in the composer, and nothing is shared automatically or by agents.
+
+- **LinkedIn, X, Threads, Instagram and Facebook Pages**: the network asks you to approve Open Media. It then gives Open Media a sign-in token plus your name and account ID on that network (for LinkedIn: your name and member ID, through LinkedIn's OpenID Connect). These stay on your device, in the Keychain or Keystore on phones and encrypted in your browser on the web, and are tied to your Open Media account. The Open Media server passes your post and token to the network when you share, and stores neither. Posts shared to LinkedIn are public.
+- **Disconnecting**: Disconnect in Settings → Cross-posting removes the token from your device. Signing out or deleting your Open Media account removes every connected network from that device too. To withdraw Open Media's access on the network itself, use that network's settings (on LinkedIn: Settings → Data privacy → Permitted services).
+- Open Media never reads your feed, messages or connections on these networks, and never uses their data for ranking or advertising.
+
 ## Your controls
 
 - Export all your data or delete your account from your profile at any time.
