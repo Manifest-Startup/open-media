@@ -14,11 +14,12 @@ import { queryNostr } from './nostrRelays';
 const timeoutMs = 12_000;
 const pageSize = 20;
 
-async function getJSON<T>(url: string): Promise<T> {
+/** `userHost`: the host came from a handle someone typed; such requests don't follow redirects. */
+async function getJSON<T>(url: string, options: { userHost?: boolean } = {}): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { signal: controller.signal, headers: { accept: 'application/json' } });
+    const response = await fetch(url, { signal: controller.signal, headers: { accept: 'application/json' }, ...(options.userHost ? { redirect: 'error' as const } : {}) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return await response.json() as T;
   } finally { clearTimeout(timer); }
@@ -73,11 +74,11 @@ export async function fetchMastodonAuthor(handle: string, cursor?: string): Prom
   const [user, host] = handle.replace(/^@/, '').split('@');
   const server = host ? mastodonServer(host) : mastodonReadingServer;
   if (!user || !server || !/^[A-Za-z0-9_.-]{1,64}$/.test(user)) return { posts: [] };
-  const account = await getJSON<{ id: string }>(`https://${server}/api/v1/accounts/lookup?acct=${encodeURIComponent(user)}`).catch(() => undefined);
+  const account = await getJSON<{ id: string }>(`https://${server}/api/v1/accounts/lookup?acct=${encodeURIComponent(user)}`, { userHost: !!host }).catch(() => undefined);
   if (!account) return { posts: [] };
   const query = new URLSearchParams({ limit: '15', exclude_replies: 'true', exclude_reblogs: 'true' });
   if (cursor) query.set('max_id', cursor);
-  const statuses = await getJSON<MastodonStatus[]>(`https://${server}/api/v1/accounts/${encodeURIComponent(account.id)}/statuses?${query}`).catch(() => []);
+  const statuses = await getJSON<MastodonStatus[]>(`https://${server}/api/v1/accounts/${encodeURIComponent(account.id)}/statuses?${query}`, { userHost: !!host }).catch(() => []);
   const last = statuses[statuses.length - 1];
   return { posts: posts(statuses.map((status) => socialPostFromMastodon(status, server, `Posted by @${user}@${server} on Mastodon`))), cursor: statuses.length === 15 ? last?.id : undefined };
 }
@@ -129,9 +130,10 @@ export async function fetchNostrFeed(cursor?: string, kind: FeedKind = 'feed'): 
 /** `npub1…`, a hex key, or a NIP-05 address (`name@domain`). */
 export async function fetchNostrAuthor(handle: string, cursor?: string): Promise<NetworkFeedPage> {
   let pubkey = nostrPublicKey(handle);
-  if (!pubkey && /^[a-z0-9._-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(handle.replace(/^@/, ''))) {
-    const [name, domain] = handle.replace(/^@/, '').toLowerCase().split('@');
-    const result = await getJSON<{ names?: Record<string, string> }>(`https://${domain}/.well-known/nostr.json?name=${encodeURIComponent(name)}`).catch(() => ({ names: undefined }));
+  const [name, rawDomain] = handle.replace(/^@/, '').toLowerCase().split('@');
+  const domain = rawDomain ? mastodonServer(rawDomain) : undefined;
+  if (!pubkey && /^[a-z0-9._-]+$/.test(name ?? '') && domain) {
+    const result = await getJSON<{ names?: Record<string, string> }>(`https://${domain}/.well-known/nostr.json?name=${encodeURIComponent(name)}`, { userHost: true }).catch(() => ({ names: undefined }));
     pubkey = nostrPublicKey(result.names?.[name] ?? '');
   }
   if (!pubkey) return { posts: [] };

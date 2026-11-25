@@ -1,6 +1,6 @@
 begin;
 
-select plan(11);
+select plan(16);
 
 insert into auth.users (id, aud, role, email, phone, encrypted_password, email_confirmed_at, phone_confirmed_at, created_at, updated_at)
 values
@@ -8,7 +8,8 @@ values
   ('b2000000-0000-0000-0000-0000000000d2', 'authenticated', 'authenticated', 'Priya@Example.test', '15550001234', '', now(), now(), now(), now()),
   ('c3000000-0000-0000-0000-0000000000d3', 'authenticated', 'authenticated', 'hidden@example.test', null, '', now(), null, now(), now()),
   ('d4000000-0000-0000-0000-0000000000d4', 'authenticated', 'authenticated', 'unconfirmed@example.test', '15550009999', '', null, null, now(), now()),
-  ('e5000000-0000-0000-0000-0000000000d5', 'authenticated', 'authenticated', 'blocker@example.test', null, '', now(), null, now(), now());
+  ('e5000000-0000-0000-0000-0000000000d5', 'authenticated', 'authenticated', 'blocker@example.test', null, '', now(), null, now(), now()),
+  ('f6000000-0000-0000-0000-0000000000d6', 'authenticated', 'authenticated', 'handleonly@example.test', null, '', now(), null, now(), now());
 
 insert into public.profiles (id, handle, display_name, bio)
 values
@@ -16,9 +17,11 @@ values
   ('b2000000-0000-0000-0000-0000000000d2', 'priya', 'Priya', ''),
   ('c3000000-0000-0000-0000-0000000000d3', 'hidden', 'Hidden', ''),
   ('d4000000-0000-0000-0000-0000000000d4', 'unconfirmed', 'Unconfirmed', ''),
-  ('e5000000-0000-0000-0000-0000000000d5', 'blocker', 'Blocker', '');
+  ('e5000000-0000-0000-0000-0000000000d5', 'blocker', 'Blocker', ''),
+  ('f6000000-0000-0000-0000-0000000000d6', 'handleonly', 'Handle Only', '');
 
 update public.profiles set discoverable = false where id = 'c3000000-0000-0000-0000-0000000000d3';
+update public.profiles set name_disclosure = 'handle_only' where id = 'f6000000-0000-0000-0000-0000000000d6';
 insert into public.user_blocks (blocker_id, blocked_id) values ('e5000000-0000-0000-0000-0000000000d5', 'a1000000-0000-0000-0000-0000000000d1');
 
 set local role authenticated;
@@ -44,6 +47,25 @@ select throws_ok(
   '22023', null, 'at most 500 at a time'
 );
 select is((public.open_media_my_identity() ->> 'discoverable')::boolean, true, 'discovery is on by default');
+select is(public.open_media_discover_contacts(array['handleonly@example.test'], null), '[]'::jsonb, 'people who show only their handle are never found');
+
+-- Daily budget: 1,000 new addresses and numbers; repeats are free.
+select lives_ok(
+  $$ select public.open_media_discover_contacts((select array_agg('bulk' || n || '@example.test') from generate_series(1, 490) as n), null) $$,
+  'a large address book fits the daily budget'
+);
+select lives_ok(
+  $$ select public.open_media_discover_contacts((select array_agg('bulk' || n || '@example.test') from generate_series(1, 490) as n), null) $$,
+  'asking again about the same addresses does not use up the budget'
+);
+select lives_ok(
+  $$ select public.open_media_discover_contacts((select array_agg('more' || n || '@example.test') from generate_series(1, 490) as n), null) $$,
+  'up to 1,000 new addresses a day are answered'
+);
+select throws_ok(
+  $$ select public.open_media_discover_contacts((select array_agg('extra' || n || '@example.test') from generate_series(1, 50) as n), null) $$,
+  '54000', null, 'more than 1,000 new addresses in a day is refused'
+);
 
 reset role;
 set local role anon;
