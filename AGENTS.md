@@ -4,6 +4,7 @@
 - Preserve the boundary between `src/domain`, `src/connectors`, `src/data`, and `src/ui`.
 - Never add real credentials, tokens, mailbox exports, or personal message data to the repository.
 - Keep connector support claims aligned with working code. Mock or proposed connectors must be labeled clearly.
+- Every connection to another network or service has a compliance report in `docs/compliance/` (format: `docs/compliance/TEMPLATE.md`, index: `docs/compliance/README.md`). Write it before turning a connection on, and update its matrix, *Last reviewed* and change log whenever the connection's code, scopes, stored data or the network's terms change.
 - Keep generated output inside this repository or an operating-system temporary directory.
 
 ## Finding code (knowledge graph)

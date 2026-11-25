@@ -38,6 +38,8 @@ const graphVersion = 'v23.0';
  * (202510 was retired on 2026-10-15). Bump this, or set LINKEDIN_API_VERSION, before it lapses:
  * https://learn.microsoft.com/linkedin/marketing/versioning
  */
+export const linkedInMaxCommentary = 3000;
+
 export const defaultLinkedInVersion = '202611';
 
 export function linkedInVersion(env?: Pick<SocialOAuthEnv, 'LINKEDIN_API_VERSION'>): string {
@@ -217,10 +219,13 @@ export async function publishSocial(network: SocialNetwork, session: SocialSessi
       return { externalId: published.id, url: permalink };
     }
     case 'linkedin': {
+      // LinkedIn counts the escaped text, so check it after escaping (Posts API: FIELD_LENGTH_TOO_LONG).
+      const commentary = linkedInCommentary(text, post.videoUrl);
+      if (commentary.length > linkedInMaxCommentary) throw new UserFacingError(`LinkedIn posts can be up to ${linkedInMaxCommentary.toLocaleString('en-US')} characters, including LinkedIn’s formatting. Shorten it a little.`);
       const created = await call(fetcher, network, 'https://api.linkedin.com/rest/posts', {
         method: 'POST',
         headers: { authorization: `Bearer ${session.token}`, 'content-type': 'application/json', 'LinkedIn-Version': linkedInVersion(env), 'X-Restli-Protocol-Version': '2.0.0' },
-        body: JSON.stringify({ author: `urn:li:person:${session.accountId}`, commentary: linkedInCommentary(text, post.videoUrl), visibility: 'PUBLIC', distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] }, lifecycleState: 'PUBLISHED', isReshareDisabledByAuthor: false }),
+        body: JSON.stringify({ author: `urn:li:person:${session.accountId}`, commentary, visibility: 'PUBLIC', distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] }, lifecycleState: 'PUBLISHED', isReshareDisabledByAuthor: false }),
       });
       const urn = created.headers.get('x-restli-id') ?? '';
       return { externalId: urn, url: urn ? `https://www.linkedin.com/feed/update/${encodeURIComponent(urn)}/` : undefined };

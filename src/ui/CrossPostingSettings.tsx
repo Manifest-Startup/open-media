@@ -83,7 +83,7 @@ const about: Partial<Record<DestinationId, string>> = {
   lens: 'Approve with your wallet',
   hive: 'Approve with Hive Keychain',
   deso: 'Approve with DeSo Identity',
-  x: 'Sign in with X', threads: 'Sign in with Threads', linkedin: 'Sign in with LinkedIn', instagram: 'Professional accounts, video posts', facebook: 'Posts to a Page you manage',
+  x: 'Sign in with X', threads: 'Sign in with Threads', linkedin: 'Connect LinkedIn to share your posts', instagram: 'Professional accounts, video posts', facebook: 'Posts to a Page you manage',
 };
 
 function TextRequestCard({ request, onSubmit, onCancel }: { request: { title: string; message: string; placeholder: string; secret?: boolean }; onSubmit: (value: string) => void; onCancel: () => void }) {
