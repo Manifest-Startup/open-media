@@ -18,7 +18,7 @@ import { boostLimits, builtInLenses, describeLensRules, forbiddenSignals, lensFo
 
 export const siteVersion = '1.2.0';
 /** When the site's pages last changed (sitemap lastmod and Markdown frontmatter). */
-export const siteUpdated = '2026-10-27';
+export const siteUpdated = '2026-11-26';
 const assets = 'https://raw.githubusercontent.com/Manifest-Startup/open-media/main/assets';
 export const iconUrl = `${assets}/brand/logo-light.png`;
 const coverUrl = `${assets}/brand/cover.png`;
