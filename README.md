@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-111111?style=flat-square"></a>
+  <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-111111?style=flat-square"></a>
   <img alt="Platforms: iOS, Android, Web" src="https://img.shields.io/badge/platforms-iOS%20%C2%B7%20Android%20%C2%B7%20Web-111111?style=flat-square">
   <img alt="Status: public beta" src="https://img.shields.io/badge/status-public%20beta-6b6b6b?style=flat-square">
   <a href="CONTRIBUTING.md"><img alt="Pull requests welcome" src="https://img.shields.io/badge/PRs-welcome-6b6b6b?style=flat-square"></a>
@@ -266,7 +266,7 @@ Install links for VS Code and Cursor, and the steps for every other client, are 
 | You choose how your feed is ranked | No | Rarely | **Yes**, with "Why this?" on every ranked post |
 | Explains what data is *not* used | No | No | **Yes** |
 | Your data leaves with you | Partly | Partly | **Full export and deletion today; portable identity is the goal** |
-| Open source | No | Usually not | **Yes (MIT)** |
+| Open source | No | Usually not | **Yes (AGPL-3.0; agent packages Apache-2.0)** |
 | Public posts open to everyone, including AI agents | No | No | **Yes, through a free API** |
 | Advertising | Core business | Varies | **None by default** |
 
@@ -362,7 +362,7 @@ The complete vision, with every principle and the reasoning behind it, is in the
 <details>
 <summary><strong>Is Open Media free?</strong></summary>
 <br>
-Yes. The app and its source code are free and open source under the MIT license. There are no ads by default.
+Yes. The app and its source code are free and open source under the GNU AGPL v3 (see [License](#license)). There are no ads by default.
 </details>
 
 <details>
@@ -399,6 +399,12 @@ You do. Posts you publish on Open Media are public and open to everyone through 
 <summary><strong>How does Open Media make money?</strong></summary>
 <br>
 The protocol does not require any single business model. The Open Media app ships with no ads by default. Future options include optional paid services (such as extra storage, premium algorithms or moderation providers) and creator tools. Money will never buy influence over how the protocol is governed.
+</details>
+
+<details>
+<summary><strong>Can I use Open Media commercially?</strong></summary>
+<br>
+Yes. The AGPL allows commercial use, including running Open Media as a paid service. In return: share the source code of your version, including your changes, with everyone who uses it, also when you only host it on a server; keep the line "Based on Open Media (https://github.com/Manifest-Startup/open-media) by Mihir Kavishwar." in your About or credits screen and documentation; and use your own name and logo (see <a href="TRADEMARKS.md">TRADEMARKS.md</a>). Building on the public API, the MCP servers, WebMCP, the SDKs or the agent plugin does not put your own app under the AGPL.
 </details>
 
 ## Honest status
@@ -465,9 +471,26 @@ Open Media is built in the open, and contributions of every size are welcome: bu
 
 The `main` branch is protected: every outside change goes through a pull request and is reviewed by the maintainer before it is merged.
 
+## Cite Open Media
+
+If you use Open Media in research or writing, please cite it. GitHub's "Cite this repository" button reads [CITATION.cff](CITATION.cff); in plain text:
+
+> Kavishwar, M. (2026). *Open Media* [Computer software]. https://github.com/Manifest-Startup/open-media
+
 ## License
 
-Open Media is released under the [MIT License](LICENSE).
+In plain words:
+
+- **The app and server** are free software under the [GNU Affero General Public License v3](LICENSE) (`AGPL-3.0-only`). You may use, change, sell and host them. If you give people your version, or let them use it over a network, you share its source code under the same licence.
+- **Attribution:** every copy, fork and hosted version keeps the line "Based on Open Media (https://github.com/Manifest-Startup/open-media) by Mihir Kavishwar." in its About or credits screen and its documentation (an additional term under AGPL section 7, in [NOTICE](NOTICE)).
+- **Trademarks:** the Open Media name and logo are not licensed with the code. Forks and hosted versions use their own name and logo; "based on Open Media" and "compatible with Open Media" are fine. See [TRADEMARKS.md](TRADEMARKS.md).
+- **Agent and developer packages** (`agent-plugin/`, `skills/`, `packages/sdk`, `packages/cli`, `packages/python`, `gemini-extension.json`, `GEMINI.md`, `glama.json`) are under the [Apache License 2.0](agent-plugin/LICENSE), so you can embed them in any app, open or closed.
+- **Documentation** in `docs/` and the prose in this README are under [CC BY 4.0](docs/LICENSE.md). Code samples in the docs follow the licence of the code they show.
+- **Using Open Media's public API, MCP servers or WebMCP tools is unaffected**: talking to the service does not put your code under the AGPL.
+- **App stores:** the iOS and Android builds are distributed by the copyright holder; their corresponding source code is this repository.
+- Releases before this change stay available under the MIT License.
+
+The full map is in [NOTICE](NOTICE). Contributions are accepted under [CONTRIBUTING.md](CONTRIBUTING.md) and [CLA.md](CLA.md).
 
 <p align="center">
   <br>

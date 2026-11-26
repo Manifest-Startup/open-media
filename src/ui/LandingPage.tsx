@@ -2,7 +2,7 @@ import Ionicons from './Icon';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AccessibilityInfo, Animated, Linking, Platform, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 
-import { agentInterfaces, honestStatus, mission, philosophy, principles, promises, roadmap, roadmapLabels, sourceRepository, surfaces, tagline } from '../domain/about';
+import { agentInterfaces, honestStatus, mission, philosophy, principles, promises, roadmap, roadmapLabels, sourceRepository, surfaces, tagline, attribution } from '../domain/about';
 import { ThemeColors } from '../theme';
 import { useOpenMediaTheme } from '../themeContext';
 import { BrandMark } from './BrandMark';
@@ -183,7 +183,7 @@ export function PublicFooter({ onNavigate }: { onNavigate: (page: PublicPage) =>
         <Pressable accessibilityRole="link" onPress={() => { Linking.openURL(sourceRepository).catch(() => undefined); }}><Text style={styles.footerLink}>Source code</Text></Pressable>
       </View>
     </View>
-    <Text style={styles.footerNote}>{tagline} Open source under the MIT License. Public posts are open to everyone; messages, email and contacts stay private.</Text>
+    <Text style={styles.footerNote}>{tagline} Open source under the GNU AGPL v3. {attribution} Public posts are open to everyone; messages, email and contacts stay private.</Text>
   </View>;
 }
 

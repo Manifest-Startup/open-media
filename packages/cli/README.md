@@ -68,4 +68,4 @@ The script is generated from the tool list, so re-run it after an update to pick
 
 `npm test` runs the unit tests. With the local stack running (`npm run local` at the repository root), `npm run test:local` signs in with an emailed code and runs reads and writes on a made-up account. `services/mail-sync/src/cliCoverage.test.ts` checks that every MCP tool is reachable as a command.
 
-Docs: https://api.openmedia.site/developers · Source: https://github.com/Manifest-Startup/open-media · MIT licence.
+Docs: https://api.openmedia.site/developers · Source: https://github.com/Manifest-Startup/open-media · Apache License 2.0.

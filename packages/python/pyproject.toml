@@ -7,10 +7,10 @@ name = "open-media"
 version = "0.2.0"
 description = "Official Python client for the Open Media API: one feed and search across Open Media, Farcaster, Lens, Hive and DeSo, Bay Area events, and the person's own account."
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 requires-python = ">=3.9"
 keywords = ["open-media", "social", "farcaster", "lens", "hive", "deso", "mcp", "sdk"]
-classifiers = ["License :: OSI Approved :: MIT License", "Programming Language :: Python :: 3"]
+classifiers = ["License :: OSI Approved :: Apache Software License", "Programming Language :: Python :: 3"]
 
 [project.urls]
 Homepage = "https://api.openmedia.site/developers"

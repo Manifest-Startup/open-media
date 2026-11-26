@@ -51,4 +51,4 @@ Payments (`startPayment`) never move money by themselves: card payments return a
 - [Developer portal](https://api.openmedia.site/developers) and [sandbox](https://api.openmedia.site/sandbox)
 - MCP: `https://api.openmedia.site/open/mcp` (public) and `https://api.openmedia.site/me/mcp` (account)
 
-MIT licence.
+Apache License 2.0 (see [LICENSE](LICENSE) and [NOTICE](NOTICE)).

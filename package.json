@@ -83,6 +83,7 @@
     "kg:build": "python3 scripts/knowledge-graph/build.py"
   },
   "private": true,
+  "license": "AGPL-3.0-only",
   "overrides": {
     "uuid": "11.1.1",
     "ws@^8.0.0": "^8.22.0"

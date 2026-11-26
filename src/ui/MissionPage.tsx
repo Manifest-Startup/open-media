@@ -2,7 +2,7 @@ import Ionicons from './Icon';
 import { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 
-import { honestStatus, mission, neverDefaults, philosophy, principles, promises, roadmap, roadmapLabels } from '../domain/about';
+import { attribution, honestStatus, mission, neverDefaults, philosophy, principles, promises, roadmap, roadmapLabels } from '../domain/about';
 import { ThemeColors } from '../theme';
 import { useOpenMediaTheme } from '../themeContext';
 import { PublicFooter, PublicNav, PublicPage } from './LandingPage';
@@ -109,6 +109,13 @@ export function MissionPage({ chrome, onNavigate, onSignIn, onBack }: { chrome: 
       <View style={[styles.chapter, styles.note]}>
         <Text style={styles.noteTitle}>Where things stand today</Text>
         <Text style={styles.noteText}>{honestStatus.join(' ')}</Text>
+      </View>
+
+      <View style={styles.chapter}>
+        <Text accessibilityRole="header" style={styles.heading}>Licence and credits</Text>
+        <Text style={styles.paragraph}>Open Media is free software under the GNU Affero General Public License v3. The agent plugin, skills and API clients are under the Apache License 2.0, and the documentation under CC BY 4.0. Using the API, the MCP servers or WebMCP does not change the licence of your own code.</Text>
+        <Text style={styles.paragraph}>The app-store builds are distributed by the copyright holder; their corresponding source is the public repository. The Open Media name and logo are trademarks, so forks and hosted versions use their own.</Text>
+        <Text style={styles.paragraph}>{attribution}</Text>
       </View>
     </View>
     {chrome === 'public' && onNavigate ? <PublicFooter onNavigate={onNavigate} /> : null}

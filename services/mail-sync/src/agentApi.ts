@@ -14,7 +14,7 @@ import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
 import {
-  agentInterfaces, honestStatus, mission, neverDefaults, philosophy, principles, promise, promises, roadmap, sourceRepository, surfaces, tagline,
+  agentInterfaces, attribution, honestStatus, licenses, mission, neverDefaults, philosophy, principles, promise, promises, roadmap, sourceRepository, surfaces, tagline,
 } from '../../../src/domain/about';
 import { chatNetworks, unreachableChatNetworks } from '../../../src/domain/chatNetworks';
 import { authorNetworks, fetchAuthorPosts } from '../../../src/connectors/networkAuthors';
@@ -365,7 +365,7 @@ export function settingsLookup(query: string | null) {
 export function aboutOpenMedia(origin: string) {
   return {
     name: 'Open Media', tagline, promise, mission, philosophy, promises, surfaces: surfaces.map(({ name, body }) => ({ name, body })),
-    principles, neverDefaults, roadmap, honestStatus, sourceCode: sourceRepository, license: 'MIT',
+    principles, neverDefaults, roadmap, honestStatus, sourceCode: sourceRepository, license: 'AGPL-3.0-only', licenses, attribution,
     interfaces: { api: `${origin}/v1`, openapi: `${origin}/v1/openapi.json`, llms: `${origin}/llms.txt`, mcp: agentInterfaces.mcp.map((server) => ({ ...server, url: `${origin}${server.path}` })) },
   };
 }
