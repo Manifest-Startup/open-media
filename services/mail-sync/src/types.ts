@@ -83,4 +83,6 @@ export interface OutgoingMail {
   text: string;
   /** Message-ID being replied to, for threading in the recipient's mail client. */
   inReplyTo?: string;
+  /** The first recipient's name, so their mail app (and the inbox) shows "Name <address>". */
+  toName?: string;
 }

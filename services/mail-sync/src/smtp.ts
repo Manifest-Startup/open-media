@@ -53,6 +53,13 @@ export async function testSmtp(connection: SmtpConnection, account: Pick<MailAcc
   }
 }
 
+/** The recipients, the first one with their name when one was given ("Stephen Collins"). */
+export function toWithName(mail: OutgoingMail): Array<string | { name: string; address: string }> {
+  const name = mail.toName?.trim();
+  if (!name || !mail.to.length) return mail.to;
+  return [{ name, address: mail.to[0] }, ...mail.to.slice(1)];
+}
+
 /** Sends one plain-text email and returns it in the stored-message shape. */
 export async function sendSmtp(
   connection: SmtpConnection,
@@ -64,7 +71,7 @@ export async function sendSmtp(
   const message = new MailComposer({
     ...(messageId ? { messageId } : {}),
     from: account.email,
-    to: mail.to,
+    to: toWithName(mail),
     ...(mail.cc?.length ? { cc: mail.cc } : {}),
     subject: mail.subject,
     text: mail.text,
@@ -90,7 +97,7 @@ export async function sendSmtp(
     mailbox: 'Sent',
     subject: mail.subject,
     from: account.email,
-    to: [...mail.to, ...(mail.cc ?? [])],
+    to: [...toWithName(mail).map((to) => (typeof to === 'string' ? to : `${to.name} <${to.address}>`)), ...(mail.cc ?? [])],
     sentAt: new Date().toISOString(),
     text: mail.text,
     inReplyTo: mail.inReplyTo,

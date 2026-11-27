@@ -64,9 +64,13 @@ export function formatEmailBody(raw: string): FormattedEmailBody {
 }
 
 /** First readable line of an email, for conversation previews. */
+const GREETING_ONLY = /^(hi|hey|hello|dear|good (morning|afternoon|evening))\b[^.!?\n]{0,40}[,!:]?$/i;
+
+/** The first line worth reading: a greeting on its own ("Hi Stephen,") is skipped, like a chat preview. */
 export function emailPreview(raw: string, fallback = ''): string {
   const { plain } = formatEmailBody(raw);
-  return plain.split('\n').map((line) => line.trim()).find((line) => line.length > 1) ?? fallback;
+  const lines = plain.split('\n').map((line) => line.trim()).filter((line) => line.length > 1);
+  return lines.find((line) => !GREETING_ONLY.test(line)) ?? lines[0] ?? fallback;
 }
 
 /**
