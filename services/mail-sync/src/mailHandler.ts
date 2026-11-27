@@ -73,6 +73,7 @@ const sendSchema = z.object({
   subject: z.string().max(998).refine((value) => !/[\r\n]/.test(value), 'Subjects cannot contain line breaks.'),
   text: z.string().min(1).max(50_000),
   inReplyTo: z.string().max(998).refine((value) => !/[\r\n]/.test(value)).optional(),
+  toName: z.string().max(120).refine((value) => !/[\r\n<>"]/.test(value)).optional(),
 });
 
 /**

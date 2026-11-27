@@ -101,3 +101,10 @@ test('long lines without wrapped links stay fast', () => {
   assert.ok(performance.now() - started < 250, `took ${Math.round(performance.now() - started)} ms`);
   assert.equal(segments.filter((segment) => segment.url).length, 6000);
 });
+
+test('a preview skips a greeting on its own line, like a chat preview', () => {
+  assert.equal(emailPreview('Hi Stephen,\n\nI read your post about two years on Crypto Clamor.'), 'I read your post about two years on Crypto Clamor.');
+  assert.equal(emailPreview('Good morning!\nThe parts arrived.'), 'The parts arrived.');
+  assert.equal(emailPreview('Hi Stephen, I read your post.'), 'Hi Stephen, I read your post.');
+  assert.equal(emailPreview('Hi Stephen,'), 'Hi Stephen,');
+});

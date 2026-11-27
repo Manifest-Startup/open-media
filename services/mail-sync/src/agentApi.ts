@@ -1538,7 +1538,7 @@ export class Account {
    * A new email from one of the person's own mailboxes (`POST /v1/me/email`): the one named, else
    * the first connected one that can send. With an idempotency key a retry never sends twice.
    */
-  async composeEmail(input: { mailbox_id?: unknown; mailboxId?: unknown; to?: unknown; subject?: unknown; text?: unknown; body?: unknown; in_reply_to?: unknown; inReplyTo?: unknown }, idempotencyKey?: string) {
+  async composeEmail(input: { mailbox_id?: unknown; mailboxId?: unknown; to?: unknown; subject?: unknown; text?: unknown; body?: unknown; in_reply_to?: unknown; inReplyTo?: unknown; to_name?: unknown; toName?: unknown }, idempotencyKey?: string) {
     const to = Array.isArray(input.to) ? input.to.filter((item): item is string => typeof item === 'string' && item.length > 0) : typeof input.to === 'string' ? [input.to] : [];
     if (!to.length || to.length > 10) throw new AgentError(400, 'bad_request', 'Give one to ten recipient email addresses.');
     const subject = typeof input.subject === 'string' ? input.subject.trim() : '';
@@ -1556,7 +1556,9 @@ export class Account {
     // A follow-up threads under the person's earlier email (its Message-ID) in the reader's mail app.
     const replyTo = input.in_reply_to ?? input.inReplyTo;
     const inReplyTo = typeof replyTo === 'string' && /^<[^<>\s\r\n]{3,900}>$/.test(replyTo) ? replyTo : undefined;
-    const result = await this.sendEmail(chosen.id, { to, subject, text, ...(inReplyTo ? { inReplyTo } : {}) }, idempotencyKey) as { message?: unknown; replayed?: boolean };
+    const rawName = input.to_name ?? input.toName;
+    const toName = typeof rawName === 'string' && rawName.trim() && !/[\r\n<>"]/.test(rawName) ? rawName.trim().slice(0, 120) : undefined;
+    const result = await this.sendEmail(chosen.id, { to, subject, text, ...(inReplyTo ? { inReplyTo } : {}), ...(toName ? { toName } : {}) }, idempotencyKey) as { message?: unknown; replayed?: boolean };
     return { mailbox_id: chosen.id, from: chosen.email, ...result };
   }
   removeMail(id: string) { return this.call('DELETE', `/v1/mail-accounts/${encodeURIComponent(id)}`); }
@@ -2313,7 +2315,7 @@ function baseOpenApi(origin: string) {
       '/v1/me/inbox/{id}/read': { post: { summary: 'Mark an inbox conversation read everywhere it came from (chat receipts, mailbox read state)', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: ok('Read'), 401: error, 404: error } } },
       '/v1/me/email': {
         get: { summary: 'Your stored email, newest first', security: bearer, parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 500, default: 50 } }], responses: { 200: ok('Email'), 401: error } },
-        post: { summary: 'Send a new email from one of your mailboxes (the one named, else the first that can send). Send an Idempotency-Key header so a retry never sends twice; the sent copy appears in your inbox, where replies arrive.', security: bearer, parameters: [{ name: 'Idempotency-Key', in: 'header', schema: { type: 'string', minLength: 8, maxLength: 200 } }], requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['to', 'subject', 'text'], properties: { mailbox_id: { type: 'string' }, to: { type: 'array', items: { type: 'string', format: 'email' }, minItems: 1, maxItems: 10 }, subject: { type: 'string', maxLength: 998 }, text: { type: 'string', maxLength: 50000 }, in_reply_to: { type: 'string', description: 'Message-ID of an earlier email to thread under, e.g. a follow-up' } } } } } }, responses: { 201: ok('{ mailbox_id, from, message: { sourceMessageId, subject, to, sentAt }, replayed? }'), 409: error, 429: error } },
+        post: { summary: 'Send a new email from one of your mailboxes (the one named, else the first that can send). Send an Idempotency-Key header so a retry never sends twice; the sent copy appears in your inbox, where replies arrive.', security: bearer, parameters: [{ name: 'Idempotency-Key', in: 'header', schema: { type: 'string', minLength: 8, maxLength: 200 } }], requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['to', 'subject', 'text'], properties: { mailbox_id: { type: 'string' }, to: { type: 'array', items: { type: 'string', format: 'email' }, minItems: 1, maxItems: 10 }, subject: { type: 'string', maxLength: 998 }, text: { type: 'string', maxLength: 50000 }, in_reply_to: { type: 'string', description: 'Message-ID of an earlier email to thread under, e.g. a follow-up' }, to_name: { type: 'string', maxLength: 120, description: 'The first recipient\'s name, shown as "Name <address>"' } } } } } }, responses: { 201: ok('{ mailbox_id, from, message: { sourceMessageId, subject, to, sentAt }, replayed? }'), 409: error, 429: error } },
       },
       '/v1/me/mailboxes/{id}/sync': { post: { summary: 'Fetch new mail into one of your mailboxes now (so a reply shows up without opening the app)', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: ok('{ messages, count, mode, cursor }'), 404: error, 429: error } } },
       '/v1/me/mailboxes': { get: { summary: 'Your connected mailboxes and whether each can send (no credentials)', security: bearer, responses: { 200: ok('{ mailboxes: [{ id, email, status, can_send }] }'), 401: error } } },

@@ -138,3 +138,21 @@ test('an Idempotency-Key gives a stable Message-ID per person and mailbox, and a
   assert.equal(await idempotentMessageId('bad key with spaces!', user, 'box-1'), undefined);
   assert.equal(await idempotentMessageId(null, user, 'box-1'), undefined);
 });
+
+test('a new email carries the first recipient’s name, and an unsafe name is dropped', async () => {
+  const { toWithName } = await import('./smtp.js');
+  assert.deepEqual(toWithName({ to: ['s@c.tech'], subject: 's', text: 't', toName: 'Stephen Collins' }), [{ name: 'Stephen Collins', address: 's@c.tech' }]);
+  assert.deepEqual(toWithName({ to: ['s@c.tech'], subject: 's', text: 't' }), ['s@c.tech']);
+  const calls: any[] = [];
+  const internal = async (request: Request) => {
+    const url = new URL(request.url);
+    calls.push({ path: url.pathname, body: await request.json().catch(() => undefined) });
+    if (url.pathname === '/v1/mail-accounts') return Response.json({ accounts: [{ id: 'b', email: 'me@x.dev', status: 'connected', canSend: true }] });
+    return Response.json({ message: { sourceMessageId: '<1@x.dev>' } }, { status: 201 });
+  };
+  const account = new Account({ SUPABASE_URL: 'https://db.test', SUPABASE_PUBLISHABLE_KEY: 'p' } as AgentEnv, 'token', user, 'https://api.test', internal);
+  await account.composeEmail({ to: ['s@c.tech'], subject: 'Hi', text: 'Hello', to_name: 'Stephen Collins' }, '8c1f7a4e-0000-4000-8000-000000000001');
+  assert.equal(calls.at(-1).body.toName, 'Stephen Collins');
+  await account.composeEmail({ to: ['s@c.tech'], subject: 'Hi', text: 'Hello', to_name: 'Evil <x@y>\r\nBcc: z' }, '8c1f7a4e-0000-4000-8000-000000000002');
+  assert.equal(calls.at(-1).body.toName, undefined);
+});
