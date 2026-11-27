@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { emailPreview, formatEmailBody } from './emailBody';
+import { emailPreview, formatEmailBody, linkMatches } from './emailBody';
 
 test('turns "Label ( url )" into tappable words', () => {
   const { segments, plain } = formatEmailBody('Shop by type\nSparkling\tSparkling\n ( https://clicks.vivino.com/f/a/B2rx~~/AAA~&lid=jn8 )\nRose Rosé ( https://clicks.vivino.com/f/a/wKS~&lid=zeq )');
@@ -70,4 +70,34 @@ test('HTML pasted into the plain-text part reads as a message, links kept', () =
 test('plain text that mentions angle brackets is not treated as HTML', () => {
   const raw = 'If a < b and c > d, use <p> tags.\nThanks';
   assert.equal(formatEmailBody(raw).plain, raw);
+});
+
+// The regex linkMatches replaced. It is quadratic on long lines, so it stays here only as the reference.
+const referencePattern = /\uE000([^\uE000\uE001\uE002]*)\uE001(https?:\/\/[^\s\uE002]+)\uE002|([^\n()[\]<>]*?)\s*[([<]\s*(https?:\/\/[^\s)\]>]+)\s*[)\]>]|(https?:\/\/[^\s)\]>]+)/g;
+const asReference = (text: string) => [...text.matchAll(referencePattern)].map((match) => ({
+  index: match.index, whole: match[0],
+  markedLabel: match[1], markedURL: match[2], label: match[3], wrappedURL: match[4], bareURL: match[5],
+}));
+const asNew = (text: string) => [...linkMatches(text)].map((match) => ({
+  index: match.index, whole: match.whole,
+  markedLabel: match.markedLabel, markedURL: match.markedURL, label: match.label, wrappedURL: match.wrappedURL, bareURL: match.bareURL,
+}));
+
+test('finds exactly the links the old link regex found', () => {
+  const pieces = ['https://a.co/x', 'http://b.io', 'https://', ' ', '  ', '\n', '\t', '(', ')', '[', ']', '<', '>', 'Label', 'Shop', '.', ',', 'h', 'ttp', '\uE000', '\uE001', '\uE002', 'é', '( https://c.com/p?q=1 )', '<https://d.org>', 'Rose [https://e.net/z]'];
+  let seed = 7;
+  const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  for (let round = 0; round < 5000; round += 1) {
+    const length = 1 + Math.floor(next() * 14);
+    const text = Array.from({ length }, () => pieces[Math.floor(next() * pieces.length)]).join('');
+    assert.deepEqual(asNew(text), asReference(text), JSON.stringify(text));
+  }
+});
+
+test('long lines without wrapped links stay fast', () => {
+  const line = 'A newsletter line with a link https://example.com/x?y=1 and more words. '.repeat(3000) + 'end';
+  const started = performance.now();
+  const { segments } = formatEmailBody(`${line}\n${line}`);
+  assert.ok(performance.now() - started < 250, `took ${Math.round(performance.now() - started)} ms`);
+  assert.equal(segments.filter((segment) => segment.url).length, 6000);
 });

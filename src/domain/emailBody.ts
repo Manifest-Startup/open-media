@@ -103,20 +103,18 @@ function dedupeRepeatedLabel(line: string): string {
 /** Converts "Label ( https://… )", "Label <https://…>", "Label [https://…]", and bare URLs into link segments. */
 function linkSegments(text: string): BodySegment[] {
   const segments: BodySegment[] = [];
-  const linkPattern = new RegExp(`${linkMark.start}([^${linkMark.start}${linkMark.split}${linkMark.end}]*)${linkMark.split}(https?:\\/\\/[^\\s${linkMark.end}]+)${linkMark.end}|${/([^\n()[\]<>]*?)\s*[([<]\s*(https?:\/\/[^\s)\]>]+)\s*[)\]>]|(https?:\/\/[^\s)\]>]+)/.source}`, 'g');
   let last = 0;
-  for (const match of text.matchAll(linkPattern)) {
-    const index = match.index ?? 0;
-    const [whole, markedLabel, markedURL, label, wrappedURL, bareURL] = match;
+  for (const match of linkMatches(text)) {
+    const { index, whole, markedLabel, markedURL, label, wrappedURL, bareURL } = match;
     if (index > last) segments.push({ text: withoutMarks(text.slice(last, index)) });
     if (markedURL) {
       // A link converted from HTML: its exact words, not the whole line before it.
-      const words = markedLabel.replace(/\s+/g, ' ').trim();
+      const words = (markedLabel ?? '').replace(/\s+/g, ' ').trim();
       segments.push(words ? { text: words, url: markedURL } : { text: linkLabel(markedURL), url: markedURL });
       last = index + whole.length;
       continue;
     }
-    const rawURL = wrappedURL ?? bareURL;
+    const rawURL = (wrappedURL ?? bareURL)!;
     const url = rawURL.replace(/[.,;:!?]+$/, '');
     const trimmedLabel = dedupeRepeatedLabel((label ?? '').trim());
     if (wrappedURL && trimmedLabel) {
@@ -132,6 +130,79 @@ function linkSegments(text: string): BodySegment[] {
   }
   if (last < text.length) segments.push({ text: withoutMarks(text.slice(last)) });
   return mergeText(segments);
+}
+
+interface LinkMatch {
+  index: number;
+  whole: string;
+  markedLabel?: string;
+  markedURL?: string;
+  label?: string;
+  wrappedURL?: string;
+  bareURL?: string;
+}
+
+const markedLink = new RegExp(`${linkMark.start}([^${linkMark.start}${linkMark.split}${linkMark.end}]*)${linkMark.split}(https?:\\/\\/[^\\s${linkMark.end}]+)${linkMark.end}`, 'y');
+const wrappedTail = /\s*[([<]\s*(https?:\/\/[^\s)\]>]+)\s*[)\]>]/y;
+const bareLink = /https?:\/\/[^\s)\]>]+/y;
+const labelBreak = /[\n()[\]<>]/g;
+const nextAnchor = new RegExp(`${linkMark.start}|https?:\\/\\/`, 'g');
+
+/**
+ * The links in `text`, left to right, as one regex would find them:
+ *   marked HTML link | "Label (url)" with a lazy label of [^\n()[\]<>] | bare url.
+ * That single regex restarts its lazy label at every character of a long line without a
+ * wrapped link, which is quadratic: a 4 MB inbox took seconds of CPU and the Worker hit
+ * its limit. Every start inside one run of label characters ends that run at the same
+ * place, so the wrapped-link test is made once per run, and the scan skips ahead to the
+ * next place a link could begin. Output matches the regex exactly (emailBody.test.ts).
+ */
+export function* linkMatches(text: string): Generator<LinkMatch> {
+  const sticky = (pattern: RegExp, at: number) => {
+    pattern.lastIndex = at;
+    return pattern.exec(text);
+  };
+  // The run of label characters that the current position is in: where it ends, and
+  // the wrapped link right after it (or null), which every start in the run shares.
+  let runEnd = -1;
+  let runTail: RegExpExecArray | null = null;
+  let p = 0;
+  while (p <= text.length) {
+    if (p > runEnd) {
+      labelBreak.lastIndex = p;
+      const brk = labelBreak.exec(text);
+      runEnd = brk ? brk.index : text.length;
+      runTail = sticky(wrappedTail, runEnd);
+    }
+    const marked = text.charCodeAt(p) === 0xe000 ? sticky(markedLink, p) : null;
+    if (marked) {
+      yield { index: p, whole: marked[0], markedLabel: marked[1], markedURL: marked[2] };
+      p += marked[0].length || 1;
+      runEnd = -1;
+      continue;
+    }
+    if (runTail) {
+      // The lazy label stops before the whitespace that leads up to the bracket.
+      let k = runEnd;
+      while (k > p && /\s/.test(text[k - 1])) k -= 1;
+      const end = runTail.index + runTail[0].length;
+      yield { index: p, whole: text.slice(p, end), label: text.slice(p, k), wrappedURL: runTail[1] };
+      p = end;
+      runEnd = -1;
+      continue;
+    }
+    const bare = sticky(bareLink, p);
+    if (bare) {
+      yield { index: p, whole: bare[0], bareURL: bare[0] };
+      p += bare[0].length;
+      runEnd = -1;
+      continue;
+    }
+    // Nothing starts here, and nothing can until the next mark or url, or the next run.
+    nextAnchor.lastIndex = p + 1;
+    const anchor = nextAnchor.exec(text);
+    p = Math.min(anchor ? anchor.index : text.length + 1, runEnd + 1);
+  }
 }
 
 /** Link marks left unpaired (say, by cutting quoted history mid-link) are never shown. */
