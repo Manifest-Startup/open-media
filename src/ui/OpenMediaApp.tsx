@@ -37,6 +37,7 @@ import { deletePost, reportPost } from "../data/postService";
 import { removeCrossPostCopies } from "../data/crossPostService";
 import { bridgedSourceOf, loadBridgedConversations, markBridgedChatRead, markBridgedChatUnread, sendBridgedMessage } from "../connectors/bridgesConnector";
 import { emailConversationId, emailReply, normalizeStoredEmail, subjectFromBody, unreadMailIn } from "../domain/emailNormalization";
+import { applyMailReadIntents, applyReadIntents, dropReadIntent, mailIntentKey, newestInboundAt, readIntent, ReadIntents } from "../domain/readIntents";
 import { useLiveMail } from "./useLiveMail";
 import { profileHandleFromPath } from "../domain/profileFields";
 import { Conversation, Message, Person } from "../domain/models";
@@ -195,6 +196,10 @@ export function OpenMediaApp({
   // What the last load returned, so a reload that changed nothing doesn't re-render the app.
   const nativeSignature = useRef("");
   const blockedSignature = useRef("");
+  // Chats and emails just read or marked unread here, held over reloads that left before the
+  // change reached the server (src/domain/readIntents.ts).
+  const chatReadIntents = useRef<ReadIntents>(new Map());
+  const mailReadIntents = useRef<ReadIntents>(new Map());
   // One people-first inbox: Open Media chats and email, newest first.
   const conversations = useMemo(
     () =>
@@ -216,7 +221,7 @@ export function OpenMediaApp({
         accounts.filter((account) => account.canSend).map((account) => account.id),
       );
       setSendingMailboxes(accounts.filter((account) => account.canSend).map((account) => ({ id: account.id, email: account.email })));
-      setMailStore({ stored, sending });
+      setMailStore({ stored: applyMailReadIntents(stored, mailReadIntents.current), sending });
     } catch {
       // Email is additive; Open Media chats still load if mail storage is unavailable.
     }
@@ -241,8 +246,10 @@ export function OpenMediaApp({
         setMessagesError("");
         const signature = JSON.stringify(next);
         if (signature !== nativeSignature.current) {
-          nativeSignature.current = signature;
-          setNativeConversations(next);
+          const shown = applyReadIntents(next, chatReadIntents.current);
+          // While a read or unread choice outweighs the server, the next load is applied again.
+          nativeSignature.current = shown === next ? signature : "";
+          setNativeConversations(shown);
         }
         const blockedKey = blocked.join(",");
         if (blockedKey !== blockedSignature.current) {
@@ -270,24 +277,32 @@ export function OpenMediaApp({
     const ids = channels.filter((channel) => channel.sourceSummary.includes("open_media") && !channel.email).map((channel) => channel.id);
     if (ids.length) {
       nativeSignature.current = ""; // the next load applies the server's state again
+      const intents = new Map(channels.filter((channel) => ids.includes(channel.id)).map((channel) => [channel.id, readIntent(false, newestInboundAt(channel))]));
+      for (const [id, intent] of intents) chatReadIntents.current.set(id, intent);
       setNativeConversations((current) => current.map((item) => (ids.includes(item.id) && item.unreadCount ? { ...item, unreadCount: 0 } : item)));
-      ids.forEach((id) => { markConversationRead(id).catch(() => undefined); });
+      ids.forEach((id) => { markConversationRead(id).catch(() => { if (dropReadIntent(chatReadIntents.current, id, intents.get(id)!)) nativeSignature.current = ""; }); });
     }
     const mail = unreadMailIn(conversation, mailStoreRef.current.stored);
     if (mail.size) {
-      const read = new Set([...mail].flatMap(([accountId, messageIds]) => messageIds.map((id) => `${accountId}:${id}`)));
-      setMailStore((current) => ({ ...current, stored: current.stored.map((message) => (message.unread && read.has(`${message.accountId}:${message.sourceMessageId}`) ? { ...message, unread: false } : message)) }));
-      mail.forEach((messageIds, accountId) => { markMailSeen(accountId, messageIds).catch(() => undefined); });
+      const read = new Set([...mail].flatMap(([accountId, messageIds]) => messageIds.map((id) => mailIntentKey(accountId, id))));
+      const intent = readIntent(false);
+      for (const key of read) mailReadIntents.current.set(key, intent);
+      setMailStore((current) => ({ ...current, stored: current.stored.map((message) => (message.unread && read.has(mailIntentKey(message.accountId, message.sourceMessageId)) ? { ...message, unread: false } : message)) }));
+      mail.forEach((messageIds, accountId) => {
+        markMailSeen(accountId, messageIds).catch(() => { for (const id of messageIds) dropReadIntent(mailReadIntents.current, mailIntentKey(accountId, id), intent); });
+      });
     }
     const rooms = channels.filter((channel) => channel.unreadCount && bridgedSourceOf(channel));
     if (rooms.length) {
       const roomIds = rooms.map((room) => room.id);
       bridgedSignature.current = ""; // the next poll applies the server's state again
+      const roomIntents = new Map(rooms.map((room) => [room.id, readIntent(false, newestInboundAt(room))]));
+      for (const [id, intent] of roomIntents) chatReadIntents.current.set(id, intent);
       setBridgedConversations((current) => current.map((item) => (roomIds.includes(item.id) ? { ...item, unreadCount: 0 } : item)));
       for (const room of rooms) {
         // A chat marked unread may have nothing new from them: its newest message is read instead.
         const latest = [...room.messages].reverse().find((message) => message.direction === "inbound" && message.conversationId === room.id) ?? room.messages[room.messages.length - 1];
-        if (latest) markBridgedChatRead(room.id, latest.sourceMessageId).catch(() => undefined);
+        if (latest) markBridgedChatRead(room.id, latest.sourceMessageId).catch(() => { if (dropReadIntent(chatReadIntents.current, room.id, roomIntents.get(room.id)!)) bridgedSignature.current = ""; });
       }
     }
   }, [messageMode]);
@@ -302,16 +317,23 @@ export function OpenMediaApp({
     if (channel.email) {
       const accountId = message.emailContext?.accountId;
       if (message.direction !== "inbound" || !accountId) return;
+      const key = mailIntentKey(accountId, message.sourceMessageId);
+      const intent = readIntent(true);
+      mailReadIntents.current.set(key, intent);
       setMailStore((current) => ({ ...current, stored: current.stored.map((item) => (item.accountId === accountId && item.sourceMessageId === message.sourceMessageId ? { ...item, unread: true } : item)) }));
-      markMailUnseen(accountId, [message.sourceMessageId]).catch(() => undefined);
+      markMailUnseen(accountId, [message.sourceMessageId]).catch(() => { dropReadIntent(mailReadIntents.current, key, intent); });
     } else if (bridgedSourceOf(channel)) {
       bridgedSignature.current = ""; // the next poll applies the server's state again
+      const intent = readIntent(true);
+      chatReadIntents.current.set(channel.id, intent);
       setBridgedConversations((current) => current.map((item) => (item.id === channel.id ? { ...item, unreadCount: Math.max(1, item.unreadCount) } : item)));
-      markBridgedChatUnread(channel.id).catch(() => undefined);
+      markBridgedChatUnread(channel.id).catch(() => { if (dropReadIntent(chatReadIntents.current, channel.id, intent)) bridgedSignature.current = ""; });
     } else if (channel.sourceSummary.includes("open_media")) {
       nativeSignature.current = "";
+      const intent = readIntent(true);
+      chatReadIntents.current.set(channel.id, intent);
       setNativeConversations((current) => current.map((item) => (item.id === channel.id ? { ...item, unreadCount: Math.max(1, item.unreadCount) } : item)));
-      markConversationUnread(channel.id).catch(() => undefined);
+      markConversationUnread(channel.id).catch(() => { if (dropReadIntent(chatReadIntents.current, channel.id, intent)) nativeSignature.current = ""; });
     }
   }, [messageMode]);
   const toggleRead = useCallback((conversation: Conversation) => {
@@ -374,8 +396,9 @@ export function OpenMediaApp({
     }
     const signature = JSON.stringify(next);
     if (signature === bridgedSignature.current) return;
-    bridgedSignature.current = signature;
-    setBridgedConversations(next);
+    const shown = applyReadIntents(next, chatReadIntents.current);
+    bridgedSignature.current = shown === next ? signature : "";
+    setBridgedConversations(shown);
   }, [currentUserId, messageMode]);
   useEffect(() => {
     bridgedQuietUntil.current = 0;

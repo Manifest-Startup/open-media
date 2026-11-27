@@ -8,6 +8,18 @@ export interface ConversationFilters {
   peopleFilter: PeopleFilter;
   query: string;
   unreadOnly: boolean;
+  /**
+   * With unread only: conversations that stay listed though they are read now, like Apple Mail's
+   * Unread mailbox. Reading a conversation from the list must not pull it out from under the person.
+   */
+  keep?: ReadonlySet<string>;
+}
+
+/** Whether a conversation stays in the Unread list: unread, or kept there by its id or a channel's. */
+export function listedAsUnread(conversation: Conversation, keep?: ReadonlySet<string>): boolean {
+  if (conversation.unreadCount > 0) return true;
+  if (!keep?.size) return false;
+  return keep.has(conversation.id) || Boolean(conversation.channels?.some((channel) => keep.has(channel.id)));
 }
 
 /**
@@ -47,7 +59,7 @@ export function filterConversations(
       if (filters.peopleFilter === 'favorites') return conversation.participants.some((person) => person.favorite);
       return true;
     })
-    .filter((conversation) => !filters.unreadOnly || conversation.unreadCount > 0)
+    .filter((conversation) => !filters.unreadOnly || listedAsUnread(conversation, filters.keep))
     .filter((conversation) => {
       if (!normalizedQuery) return true;
       const searchable = [

@@ -1,6 +1,6 @@
 import Ionicons from "./Icon";
 import { useThemedStyles } from './useThemedStyles';
-import { memo, PropsWithChildren, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, PropsWithChildren, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AccessibilityInfo, Animated, Easing, Image, Keyboard, LayoutChangeEvent, Linking, Modal, PanResponder, Platform, Pressable, ScrollView, StyleProp, StyleSheet, TextStyle, View, ViewStyle, useWindowDimensions } from "react-native";
 import { Loader } from "./Loader";
 import { PullToRefresh } from "./PullToRefresh";
@@ -109,15 +109,22 @@ export function OpenMediaMessages({
   useEffect(() => { if (openConversationId) setSelectedId(openConversationId); }, [openConversationId]);
   const [peopleFilter, setPeopleFilter] = useState<PeopleFilter>("all");
   const [newMessageOpen, setNewMessageOpen] = useState(false);
-  const filtered = useMemo(
-    () =>
-      filterConversations(
-        // The open conversation stays listed after reading it clears its unread mark.
-        unreadOnly ? conversations.filter((conversation) => conversation.unreadCount > 0 || conversation.id === selectedId) : conversations,
-        { peopleFilter, query: "", unreadOnly: false },
-      ),
-    [conversations, peopleFilter, unreadOnly, selectedId],
-  );
+  // Like Apple Mail's Unread mailbox: what the list showed stays listed, read or not, until unread
+  // only is turned off. Otherwise reading a row pulled it out from under the person, and on wide
+  // screens, where the top row opens by itself, each read row made the next one open and read itself.
+  const keptUnread = useRef(new Set<string>());
+  const filtered = useMemo(() => {
+    if (!unreadOnly) return filterConversations(conversations, { peopleFilter, query: "", unreadOnly: false });
+    if (selectedId) keptUnread.current.add(selectedId);
+    const listed = filterConversations(conversations, { peopleFilter, query: "", unreadOnly: true, keep: keptUnread.current });
+    for (const conversation of listed) keptUnread.current.add(conversation.id);
+    return listed;
+  }, [conversations, peopleFilter, unreadOnly, selectedId]);
+  const toggleUnreadOnly = useCallback(() => {
+    selectionHaptic();
+    keptUnread.current = new Set();
+    setUnreadOnly((value) => !value);
+  }, []);
   const selected =
     // A profile's “Message” opens a person's chat by its own id, which may now be one channel of a merged conversation.
     conversations.find((conversation) => conversation.id === selectedId || conversation.channels?.some((channel) => channel.id === selectedId)) ??
@@ -183,7 +190,7 @@ export function OpenMediaMessages({
                 accessibilityRole="button"
                 accessibilityLabel="Unread only"
                 accessibilityState={{ selected: unreadOnly }}
-                onPress={() => { selectionHaptic(); setUnreadOnly((value) => !value); }}
+                onPress={toggleUnreadOnly}
                 style={({ hovered, pressed }: { hovered?: boolean; pressed: boolean }) => [styles.unreadButton, unreadOnly && styles.unreadButtonActive, (hovered || pressed) && !unreadOnly && styles.unreadButtonHover]}
               >
                 <Ionicons
