@@ -89,3 +89,46 @@ test('mail and chat read state go through the same routes the app uses', async (
     assert.equal(calls.at(-1)!.url.pathname, '/v1/bridges/whatsapp/login/cancel');
   } finally { restore(); }
 });
+
+test('apps send a new email from the person’s own mailbox, idempotently, and never see credentials', async () => {
+  const calls: { method: string; path: string; body: any; key: string | null }[] = [];
+  let accounts = [
+    { id: 'box-read', email: 'read@me.test', status: 'connected', canSend: false },
+    { id: 'box-send', email: 'me@me.test', status: 'connected', canSend: true, encryptedSecret: 'never' },
+  ];
+  const internal = async (request: Request) => {
+    const url = new URL(request.url);
+    calls.push({ method: request.method, path: url.pathname, body: await request.json().catch(() => undefined), key: request.headers.get('idempotency-key') });
+    if (url.pathname === '/v1/mail-accounts') return Response.json({ accounts });
+    return Response.json({ message: { sourceMessageId: '<om-1@openmedia.site>', subject: 'Hi' } }, { status: 201 });
+  };
+  const env = { SUPABASE_URL: 'https://db.test', SUPABASE_PUBLISHABLE_KEY: 'publishable' } as AgentEnv;
+  const account = new Account(env, 'token', user, 'https://api.test', internal);
+  assert.deepEqual(await account.mailboxes(), { mailboxes: [
+    { id: 'box-read', email: 'read@me.test', status: 'connected', can_send: false },
+    { id: 'box-send', email: 'me@me.test', status: 'connected', can_send: true },
+  ] });
+  const sent = await account.composeEmail({ to: ['ana@co.test'], subject: ' Hi ', text: ' Hello Ana ' }, 'goal-task-12345');
+  assert.equal(sent.mailbox_id, 'box-send');
+  assert.equal(sent.from, 'me@me.test');
+  const send = calls.at(-1)!;
+  assert.equal(send.path, '/v1/mail-accounts/box-send/send');
+  assert.deepEqual(send.body, { to: ['ana@co.test'], subject: 'Hi', text: 'Hello Ana' });
+  assert.equal(send.key, 'goal-task-12345');
+  await assert.rejects(() => account.composeEmail({ mailbox_id: 'box-read', to: ['a@b.test'], subject: 's', text: 't' }), /no outgoing mail/);
+  await assert.rejects(() => account.composeEmail({ to: [], subject: 's', text: 't' }), /one to ten/);
+  await assert.rejects(() => account.composeEmail({ to: ['a@b.test'], subject: '', text: 't' }), /subject/);
+  accounts = [];
+  await assert.rejects(() => account.composeEmail({ to: ['a@b.test'], subject: 's', text: 't' }), /Connect a mailbox/);
+});
+
+test('an Idempotency-Key gives a stable Message-ID per person and mailbox, and a bad key gives none', async () => {
+  const { idempotentMessageId } = await import('./mailHandler.js');
+  const a = await idempotentMessageId('goal-task-12345', user, 'box-1');
+  assert.match(a!, /^<om-[0-9a-f]{32}@openmedia\.site>$/);
+  assert.equal(await idempotentMessageId('goal-task-12345', user, 'box-1'), a);
+  assert.notEqual(await idempotentMessageId('goal-task-12345', user, 'box-2'), a);
+  assert.equal(await idempotentMessageId('short', user, 'box-1'), undefined);
+  assert.equal(await idempotentMessageId('bad key with spaces!', user, 'box-1'), undefined);
+  assert.equal(await idempotentMessageId(null, user, 'box-1'), undefined);
+});

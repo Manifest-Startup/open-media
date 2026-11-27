@@ -1525,8 +1525,37 @@ export class Account {
 
   mailAccounts() { return this.call('GET', '/v1/mail-accounts'); }
   connectMail(input: unknown) { return this.call('POST', '/v1/mail-accounts', input); }
-  syncMail(id: string) { return this.call('POST', `/v1/mail-accounts/${encodeURIComponent(id)}/sync`, {}); }
-  sendEmail(id: string, mail: unknown) { return this.call('POST', `/v1/mail-accounts/${encodeURIComponent(id)}/send`, mail); }
+  syncMail(id: string) { return this.call<Record<string, unknown>>('POST', `/v1/mail-accounts/${encodeURIComponent(id)}/sync`, {}); }
+  sendEmail(id: string, mail: unknown, idempotencyKey?: string) { return this.call('POST', `/v1/mail-accounts/${encodeURIComponent(id)}/send`, mail, idempotencyKey ? { 'idempotency-key': idempotencyKey } : undefined); }
+
+  /** The person's mailboxes for apps (`/v1/me/mailboxes`): address, state and whether each can send. No credentials. */
+  async mailboxes() {
+    const { accounts } = await this.call<{ accounts?: Array<{ id: string; email: string; status: string; canSend: boolean }> }>('GET', '/v1/mail-accounts');
+    return { mailboxes: (accounts ?? []).map((account) => ({ id: account.id, email: account.email, status: account.status, can_send: Boolean(account.canSend) })) };
+  }
+
+  /**
+   * A new email from one of the person's own mailboxes (`POST /v1/me/email`): the one named, else
+   * the first connected one that can send. With an idempotency key a retry never sends twice.
+   */
+  async composeEmail(input: { mailbox_id?: unknown; mailboxId?: unknown; to?: unknown; subject?: unknown; text?: unknown; body?: unknown }, idempotencyKey?: string) {
+    const to = Array.isArray(input.to) ? input.to.filter((item): item is string => typeof item === 'string' && item.length > 0) : typeof input.to === 'string' ? [input.to] : [];
+    if (!to.length || to.length > 10) throw new AgentError(400, 'bad_request', 'Give one to ten recipient email addresses.');
+    const subject = typeof input.subject === 'string' ? input.subject.trim() : '';
+    if (!subject) throw new AgentError(400, 'bad_request', 'Give the email a subject.');
+    const raw = input.text ?? input.body;
+    const text = typeof raw === 'string' ? raw.trim() : '';
+    if (!text) throw new AgentError(400, 'bad_request', 'Write the email first.');
+    const { mailboxes } = await this.mailboxes();
+    const wanted = input.mailbox_id ?? input.mailboxId;
+    const chosen = typeof wanted === 'string' && wanted
+      ? mailboxes.find((mailbox) => mailbox.id === wanted)
+      : mailboxes.find((mailbox) => mailbox.can_send && mailbox.status === 'connected') ?? mailboxes.find((mailbox) => mailbox.can_send);
+    if (!chosen) throw new AgentError(409, 'no_mailbox', mailboxes.length ? 'None of your mailboxes can send yet. Add outgoing mail (SMTP) settings in Open Media → Settings → Email & connections.' : 'Connect a mailbox in Open Media → Settings → Email & connections to send email.');
+    if (!chosen.can_send) throw new AgentError(409, 'no_mailbox', 'This mailbox has no outgoing mail (SMTP) settings yet.');
+    const result = await this.sendEmail(chosen.id, { to, subject, text }, idempotencyKey) as { message?: unknown; replayed?: boolean };
+    return { mailbox_id: chosen.id, from: chosen.email, ...result };
+  }
   removeMail(id: string) { return this.call('DELETE', `/v1/mail-accounts/${encodeURIComponent(id)}`); }
 
   // Chat networks through bridges (ADR 0011).
@@ -1578,11 +1607,11 @@ export class Account {
     return person.id;
   }
 
-  private async call<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
+  private async call<T = unknown>(method: string, path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
     if (!this.internal) throw new AgentError(501, 'unavailable', 'This route is not available here.');
     const response = await this.internal(new Request(`${this.origin}${path}`, {
       method,
-      headers: { authorization: `Bearer ${this.token}`, ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
+      headers: { authorization: `Bearer ${this.token}`, ...(body !== undefined ? { 'content-type': 'application/json' } : {}), ...(extraHeaders ?? {}) },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     }));
     const result = await response.json().catch(() => ({})) as { error?: string };
@@ -2279,7 +2308,12 @@ function baseOpenApi(origin: string) {
       '/v1/me/inbox/{id}': { get: { summary: 'One inbox conversation laid out for reading: time breaks, runs, subjects when they change, and email bodies as clean text with links', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: ok('{ conversation, items: [{ kind: time, at } | { kind: message, id, direction, sender_name, sent_at, source, subject, body: [{ text, url? }], plain, attachments, reply_to_message_id, group_start, group_end }] }'), 401: error, 404: error } } },
       '/v1/me/inbox/{id}/messages': { post: { summary: 'Reply in an inbox conversation: a message in a chat, or an email to the right people (reply all in a group), threaded, from the mailbox that received it', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['body'], properties: { body: { type: 'string', maxLength: 50000 }, reply_to_message_id: { type: 'string' }, client_id: { type: 'string', format: 'uuid' } } } } } }, responses: { 201: ok('Sent'), 400: error, 401: error, 404: error, 409: error } } },
       '/v1/me/inbox/{id}/read': { post: { summary: 'Mark an inbox conversation read everywhere it came from (chat receipts, mailbox read state)', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: ok('Read'), 401: error, 404: error } } },
-      '/v1/me/email': { get: { summary: 'Your stored email, newest first', security: bearer, parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 500, default: 50 } }], responses: { 200: ok('Email'), 401: error } } },
+      '/v1/me/email': {
+        get: { summary: 'Your stored email, newest first', security: bearer, parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 500, default: 50 } }], responses: { 200: ok('Email'), 401: error } },
+        post: { summary: 'Send a new email from one of your mailboxes (the one named, else the first that can send). Send an Idempotency-Key header so a retry never sends twice; the sent copy appears in your inbox, where replies arrive.', security: bearer, parameters: [{ name: 'Idempotency-Key', in: 'header', schema: { type: 'string', minLength: 8, maxLength: 200 } }], requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['to', 'subject', 'text'], properties: { mailbox_id: { type: 'string' }, to: { type: 'array', items: { type: 'string', format: 'email' }, minItems: 1, maxItems: 10 }, subject: { type: 'string', maxLength: 998 }, text: { type: 'string', maxLength: 50000 } } } } } }, responses: { 201: ok('{ mailbox_id, from, message: { sourceMessageId, subject, to, sentAt }, replayed? }'), 409: error, 429: error } },
+      },
+      '/v1/me/mailboxes/{id}/sync': { post: { summary: 'Fetch new mail into one of your mailboxes now (so a reply shows up without opening the app)', security: bearer, parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { 200: ok('{ messages, count, mode, cursor }'), 404: error, 429: error } } },
+      '/v1/me/mailboxes': { get: { summary: 'Your connected mailboxes and whether each can send (no credentials)', security: bearer, responses: { 200: ok('{ mailboxes: [{ id, email, status, can_send }] }'), 401: error } } },
       '/v1/me/contacts': {
         get: { summary: 'Your contacts (private; stored encrypted)', security: bearer, responses: { 200: ok('Your contact cards'), 401: error } },
         put: { summary: 'Create or replace contact cards by id (up to 500)', security: bearer, requestBody: { required: true, content: { 'application/json': { schema: { type: 'array', maxItems: 500, items: { type: 'object', required: ['id', 'name', 'phones', 'emails', 'links', 'rejected', 'nicknames', 'notes'], properties: { id: { type: 'string', format: 'uuid' }, source: { type: 'string', enum: ['device', 'manual'] }, name: { type: 'string' }, nicknames: { type: 'array', items: { type: 'string' } }, phones: { type: 'array', items: { type: 'string' } }, emails: { type: 'array', items: { type: 'string' } }, handles: { type: 'array', items: { type: 'object', required: ['network', 'handle'], properties: { network: { type: 'string' }, handle: { type: 'string' } } } }, notes: { type: 'string' }, links: { type: 'array', items: { type: 'object' } }, rejected: { type: 'array', items: { type: 'string' } }, updatedAt: { type: 'string' } } } } } } }, responses: { 200: ok('Saved'), 400: error, 401: error } },
@@ -2673,6 +2707,10 @@ export async function handleAgentRequest(request: Request, env: AgentEnv, intern
     if (draftMatch && draftMatch[2] === 'send' && request.method === 'POST') return json(await account.sendDraft(decodeURIComponent(draftMatch[1])), 0, 201);
     if (request.method === 'GET' && path === '/v1/me/export') return json(await account.exportData(), 0);
     if (request.method === 'GET' && path === '/v1/me/email') return json(await account.email(Number(url.searchParams.get('limit') ?? 50)), 0);
+    if (request.method === 'POST' && path === '/v1/me/email') return json(await account.composeEmail(body, idempotencyKey ?? (typeof body.client_id === 'string' ? body.client_id : undefined)), 0, 201);
+    if (request.method === 'GET' && path === '/v1/me/mailboxes') return json(await account.mailboxes(), 0);
+    const mailboxSync = path.match(/^\/v1\/me\/mailboxes\/([^/]+)\/sync$/);
+    if (request.method === 'POST' && mailboxSync) return json(await account.syncMail(decodeURIComponent(mailboxSync[1])), 0);
     if (request.method === 'GET' && path === '/v1/me/inbox') return json(await account.inbox(Number(url.searchParams.get('limit') ?? 100)), 0);
     const inboxMatch = path.match(/^\/v1\/me\/inbox\/([^/]+)(?:\/(messages|read))?$/);
     if (inboxMatch && request.method === 'GET' && !inboxMatch[2]) return json(await account.inboxConversation(decodeURIComponent(inboxMatch[1])), 0);

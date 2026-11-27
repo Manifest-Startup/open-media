@@ -59,8 +59,10 @@ export async function sendSmtp(
   account: Pick<MailAccountInput, 'email' | 'username' | 'password'>,
   mail: OutgoingMail,
   open = openSocket,
+  messageId?: string,
 ): Promise<SyncedMessage> {
   const message = new MailComposer({
+    ...(messageId ? { messageId } : {}),
     from: account.email,
     to: mail.to,
     ...(mail.cc?.length ? { cc: mail.cc } : {}),
