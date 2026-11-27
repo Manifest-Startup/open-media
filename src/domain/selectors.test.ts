@@ -100,3 +100,18 @@ test('Open Media AI is not a person, and Open Media’s notices account is a com
   assert.deepEqual(ids('direct'), []);
   assert.deepEqual(ids('companies'), ['notices']);
 });
+
+test('unread only keeps conversations it listed after they are read, like Apple Mail', () => {
+  const at = '2026-11-27T10:00:00Z';
+  const base = { participants: [], messages: [], sourceSummary: ['open_media' as const], lastMessageAt: at, preview: '', labels: [] };
+  const read = { ...base, id: 'read', unreadCount: 0 };
+  const merged = { ...base, id: 'contact:1', unreadCount: 0, channels: [{ ...base, id: 'chat-1', unreadCount: 0 }] };
+  const unread = { ...base, id: 'unread', unreadCount: 2 };
+  const filters = { peopleFilter: 'all' as const, query: '', unreadOnly: true };
+  assert.deepEqual(filterConversations([read, merged, unread], filters).map((item) => item.id), ['unread']);
+  assert.deepEqual(
+    filterConversations([read, merged, unread], { ...filters, keep: new Set(['read', 'chat-1']) }).map((item) => item.id).sort(),
+    ['contact:1', 'read', 'unread'],
+    'kept by its own id or by one of its channels',
+  );
+});
