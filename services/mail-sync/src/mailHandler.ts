@@ -75,12 +75,18 @@ const sendSchema = z.object({
   inReplyTo: z.string().max(998).refine((value) => !/[\r\n]/.test(value)).optional(),
 });
 
-/** A Message-ID derived from the caller's Idempotency-Key (8–200 safe characters), per person and mailbox. */
-export async function idempotentMessageId(key: string | null, userId: string, accountId: string): Promise<string | undefined> {
+/**
+ * A Message-ID derived from the caller's Idempotency-Key (8–200 safe characters), per person and
+ * mailbox, in the sender's own domain like any mail app's (a foreign domain there is a spam
+ * signal to receiving servers).
+ */
+export async function idempotentMessageId(key: string | null, userId: string, accountId: string, senderEmail?: string): Promise<string | undefined> {
   if (!key || !/^[A-Za-z0-9._:-]{8,200}$/.test(key)) return undefined;
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${userId}:${accountId}:${key}`)));
   const hex = [...digest.slice(0, 16)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-  return `<om-${hex}@openmedia.site>`;
+  const domain = (senderEmail?.split('@').pop() ?? '').toLowerCase();
+  const host = /^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain) ? domain : 'openmedia.site';
+  return `<${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}@${host}>`;
 }
 
 /** Icons are images from other sites: never sniffed, and an SVG opened directly is sandboxed. */
@@ -261,7 +267,7 @@ export async function handleMailRequest(request: Request, env: MailEnv): Promise
       if (!account.smtp) return json(409, { error: 'Add outgoing mail (SMTP) settings to this mailbox before sending.' }, headers);
       // With an Idempotency-Key the Message-ID is derived from it, so a retried send finds the
       // stored copy and answers with it instead of emailing the person twice.
-      const messageId = await idempotentMessageId(request.headers.get('idempotency-key'), session.userId, account.id);
+      const messageId = await idempotentMessageId(request.headers.get('idempotency-key'), session.userId, account.id, account.email);
       if (messageId && (await repository.knownSenders(account.id, [messageId])).has(messageId)) {
         return json(200, { message: { sourceMessageId: messageId, mailbox: 'Sent', subject: mail.subject, from: account.email, to: [...mail.to, ...(mail.cc ?? [])], text: mail.text }, replayed: true }, headers);
       }

@@ -128,10 +128,12 @@ test('apps send a new email from the person’s own mailbox, idempotently, and n
 
 test('an Idempotency-Key gives a stable Message-ID per person and mailbox, and a bad key gives none', async () => {
   const { idempotentMessageId } = await import('./mailHandler.js');
-  const a = await idempotentMessageId('goal-task-12345', user, 'box-1');
-  assert.match(a!, /^<om-[0-9a-f]{32}@openmedia\.site>$/);
-  assert.equal(await idempotentMessageId('goal-task-12345', user, 'box-1'), a);
-  assert.notEqual(await idempotentMessageId('goal-task-12345', user, 'box-2'), a);
+  const a = await idempotentMessageId('goal-task-12345', user, 'box-1', 'Me@Founder.dev');
+  // The sender's own domain, shaped like a mail app's Message-ID.
+  assert.match(a!, /^<[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@founder\.dev>$/);
+  assert.equal(await idempotentMessageId('goal-task-12345', user, 'box-1', 'Me@Founder.dev'), a);
+  assert.notEqual(await idempotentMessageId('goal-task-12345', user, 'box-2', 'Me@Founder.dev'), a);
+  assert.match((await idempotentMessageId('goal-task-12345', user, 'box-1'))!, /@openmedia\.site>$/);
   assert.equal(await idempotentMessageId('short', user, 'box-1'), undefined);
   assert.equal(await idempotentMessageId('bad key with spaces!', user, 'box-1'), undefined);
   assert.equal(await idempotentMessageId(null, user, 'box-1'), undefined);
