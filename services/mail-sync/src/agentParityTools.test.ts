@@ -115,6 +115,10 @@ test('apps send a new email from the person’s own mailbox, idempotently, and n
   assert.equal(send.path, '/v1/mail-accounts/box-send/send');
   assert.deepEqual(send.body, { to: ['ana@co.test'], subject: 'Hi', text: 'Hello Ana' });
   assert.equal(send.key, 'goal-task-12345');
+  await account.composeEmail({ to: ['ana@co.test'], subject: 'Re: Hi', text: 'Following up', in_reply_to: '<om-1@openmedia.site>' }, 'goal-task-67890');
+  assert.equal(calls.at(-1)!.body.inReplyTo, '<om-1@openmedia.site>');
+  await account.composeEmail({ to: ['ana@co.test'], subject: 'x', text: 'y', in_reply_to: 'bad\r\nBcc: z' }, 'goal-task-67891');
+  assert.equal(calls.at(-1)!.body.inReplyTo, undefined);
   await assert.rejects(() => account.composeEmail({ mailbox_id: 'box-read', to: ['a@b.test'], subject: 's', text: 't' }), /no outgoing mail/);
   await assert.rejects(() => account.composeEmail({ to: [], subject: 's', text: 't' }), /one to ten/);
   await assert.rejects(() => account.composeEmail({ to: ['a@b.test'], subject: '', text: 't' }), /subject/);
