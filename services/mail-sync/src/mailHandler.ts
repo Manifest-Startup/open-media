@@ -75,6 +75,14 @@ const sendSchema = z.object({
   inReplyTo: z.string().max(998).refine((value) => !/[\r\n]/.test(value)).optional(),
 });
 
+/** A Message-ID derived from the caller's Idempotency-Key (8–200 safe characters), per person and mailbox. */
+export async function idempotentMessageId(key: string | null, userId: string, accountId: string): Promise<string | undefined> {
+  if (!key || !/^[A-Za-z0-9._:-]{8,200}$/.test(key)) return undefined;
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${userId}:${accountId}:${key}`)));
+  const hex = [...digest.slice(0, 16)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `<om-${hex}@openmedia.site>`;
+}
+
 /** Icons are images from other sites: never sniffed, and an SVG opened directly is sandboxed. */
 const iconHeaders = {
   'access-control-allow-origin': '*',
@@ -251,7 +259,13 @@ export async function handleMailRequest(request: Request, env: MailEnv): Promise
       const account = await repository.findAccount(session.userId, sendMatch[1]);
       if (!account) return json(404, { error: 'Mailbox not found.' }, headers);
       if (!account.smtp) return json(409, { error: 'Add outgoing mail (SMTP) settings to this mailbox before sending.' }, headers);
-      const sent = await sendSmtp(await smtpConnection(account.smtp, env), { ...account, password: decryptSecret(account.encryptedSecret, env.MAIL_CREDENTIALS_KEY) }, mail);
+      // With an Idempotency-Key the Message-ID is derived from it, so a retried send finds the
+      // stored copy and answers with it instead of emailing the person twice.
+      const messageId = await idempotentMessageId(request.headers.get('idempotency-key'), session.userId, account.id);
+      if (messageId && (await repository.knownSenders(account.id, [messageId])).has(messageId)) {
+        return json(200, { message: { sourceMessageId: messageId, mailbox: 'Sent', subject: mail.subject, from: account.email, to: [...mail.to, ...(mail.cc ?? [])], text: mail.text }, replayed: true }, headers);
+      }
+      const sent = await sendSmtp(await smtpConnection(account.smtp, env), { ...account, password: decryptSecret(account.encryptedSecret, env.MAIL_CREDENTIALS_KEY) }, mail, undefined, messageId);
       await repository.saveMessages(session.userId, account.id, [sent]);
       return json(201, { message: sent }, headers);
     }
