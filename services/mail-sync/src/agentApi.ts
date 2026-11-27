@@ -131,6 +131,9 @@ async function paymentsCall<T>(run: () => Promise<T>): Promise<T> {
 }
 
 /** Paths served here. They are matched before the read-only public API and the mail routes. */
+/** Stored emails the one inbox is built from per request (see inboxSources). */
+export const INBOX_MAIL_ROWS = 150;
+
 export function isAgentPath(pathname: string, method: string): boolean {
   const path = pathname.replace(/\/+$/, '') || '/';
   if (isSitePath(path) || path === '/agent/identity' || path === '/ask' || path === '/feeds/posts.jsonl' || path.startsWith('/v1/auth/')) return true;
@@ -1463,7 +1466,9 @@ export class Account {
   private async inboxSources() {
     const [native, mailRows, unseenRows, bridged] = await Promise.all([
       this.conversations(20).then((result) => (result as { conversations?: NativeConversation[] }).conversations ?? []),
-      this.rpc<Record<string, unknown>[]>('open_media_list_mail_messages', { p_limit: 500 }).then((rows) => rows ?? []),
+      // Full bodies are parsed for every row, inside the Worker's CPU budget; 500 tipped busy
+      // inboxes over it (exceededCpu). Recent mail is what the inbox shows first anyway.
+      this.rpc<Record<string, unknown>[]>('open_media_list_mail_messages', { p_limit: INBOX_MAIL_ROWS }).then((rows) => rows ?? []),
       // Read state (ADR 0026); without it, all mail counts as read.
       this.rpc<{ account_id: string; source_message_id: string }[]>('open_media_unseen_mail', {}).then((rows) => rows ?? [], () => []),
       // Bridged chats only where the bridges are set up.
