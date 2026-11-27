@@ -18,7 +18,7 @@ import { boostLimits, builtInLenses, describeLensRules, forbiddenSignals, lensFo
 
 export const siteVersion = '1.2.0';
 /** When the site's pages last changed (sitemap lastmod and Markdown frontmatter). */
-export const siteUpdated = '2026-10-27';
+export const siteUpdated = '2026-11-26';
 const assets = 'https://raw.githubusercontent.com/Manifest-Startup/open-media/main/assets';
 export const iconUrl = `${assets}/brand/logo-light.png`;
 const coverUrl = `${assets}/brand/cover.png`;
@@ -28,7 +28,7 @@ interface Page { path: string; title: string; description: string; body: (origin
 
 /** The same answers as the FAQ in the README. */
 const faq = [
-  { question: 'Is Open Media free?', answer: 'Yes. The app and its source code are free and open source under the MIT licence. There are no ads by default.' },
+  { question: 'Is Open Media free?', answer: 'Yes. The app and its source code are free and open source under the GNU AGPL v3, with an attribution requirement. There are no ads by default.' },
   { question: 'Do my friends need to join for it to be useful?', answer: 'No. Open Media is useful on day one by connecting the networks and email accounts you already use. Friends on Open Media are a bonus, not a requirement.' },
   { question: 'Can it show my Instagram, X, TikTok or LinkedIn feed?', answer: 'Not today. Those companies do not offer open access for apps like Open Media, and Open Media does not scrape them. It connects to networks that allow it (Farcaster, Lens, Hive, DeSo and email).' },
   { question: 'Do I need a crypto wallet?', answer: 'No. You sign in with your email. Some open networks use blockchain technology behind the scenes, but you never need to understand it, hold tokens or pay fees to read the feed.' },
@@ -57,7 +57,7 @@ ${promises.map((item) => `- **${item.title}.** ${item.body}`).join('\n')}
 
 ${surfaces.map((item) => `- **${item.name}:** ${item.body}`).join('\n')}
 
-Open Media is a free, open-source app for iPhone, Android and the web (MIT licence). It reads public posts from Farcaster, Lens, Hive and DeSo, keeps every post's source and link, and explains every ranked post with "Why this?".
+Open Media is a free, open-source app for iPhone, Android and the web (GNU AGPL v3). It reads public posts from Farcaster, Lens, Hive and DeSo, keeps every post's source and link, and explains every ranked post with "Why this?".
 
 ## For AI agents and developers
 
@@ -384,7 +384,7 @@ Open Media is building an ONDC seller app (Beckn, retail 1.2.0), described at [$
 - [API documentation](${origin}/docs) and [OpenAPI 3.1](${origin}/v1/openapi.json)
 - [Agent guide](${origin}/agents) and [authentication](${origin}/auth.md)
 - [Skills index](${origin}/.well-known/agent-skills/index.json) and [MCP server card](${origin}/.well-known/mcp/server-card.json)
-- [Source code (MIT)](${sourceRepository})
+- [Source code (AGPL-3.0)](${sourceRepository})
 `,
   },
   {
@@ -422,7 +422,7 @@ ${mission}
 
 ${philosophy.line} ${philosophy.body}
 
-Open Media is an open-source project (MIT licence) developed in the open at [${sourceRepository}](${sourceRepository}). It ships one app for iPhone, Android and the web, a public API, MCP servers for AI agents, and the database rules that protect people's data.
+Open Media is an open-source project (GNU AGPL v3; the agent plugin, skills and API clients are Apache 2.0) developed in the open at [${sourceRepository}](${sourceRepository}). It ships one app for iPhone, Android and the web, a public API, MCP servers for AI agents, and the database rules that protect people's data.
 
 ## What it is today
 
@@ -507,7 +507,7 @@ Questions: see [contact](${origin}/contact).
     description: 'The plain-language terms for using Open Media, its API and its agent plugins: your content stays yours, what is not allowed, and how agents act for you.',
     body: (origin) => `# Open Media terms of use
 
-Open Media is an open-source project in public beta. These terms describe how it may be used, through the app, this API, the MCP servers and the agent plugins. The source code is public under the MIT License in the [repository](${sourceRepository}).
+Open Media is an open-source project in public beta. These terms describe how it may be used, through the app, this API, the MCP servers and the agent plugins. The source code is public in the [repository](${sourceRepository}) under the GNU AGPL v3; the agent plugin, skills and API clients are under the Apache License 2.0, and the documentation under CC BY 4.0. Using the API, the MCP servers or WebMCP does not put your own code under any of these licences. The Open Media name and logo are trademarks; see [TRADEMARKS.md](${sourceRepository}/blob/main/TRADEMARKS.md).
 
 ## Your content and your account
 
@@ -529,7 +529,7 @@ Content or accounts that break these rules may be hidden or suspended; you'll be
 
 ## No warranty
 
-Open Media is provided as is, without warranty of any kind, as described in the MIT License. Features in beta may change or stop. Payments are between buyers and sellers through Stripe or their own wallets; Open Media never holds money.
+Open Media is provided as is, without warranty of any kind, as described in the GNU AGPL v3 (sections 15 and 16). Features in beta may change or stop. Payments are between buyers and sellers through Stripe or their own wallets; Open Media never holds money.
 
 ## Changes and contact
 
@@ -700,7 +700,7 @@ function jsonLd(origin: string, page: Page) {
   if (page.path === '/' || page.path === '/pricing') {
     graph.push({
       '@type': 'SoftwareApplication', '@id': `${origin}/#app`, name: 'Open Media', description: `${tagline} ${promise}`, url: `${origin}/`, applicationCategory: 'SocialNetworkingApplication',
-      operatingSystem: 'iOS, Android, Web', image: coverUrl, license: 'https://opensource.org/licenses/MIT', sameAs: [sourceRepository], publisher: { '@id': `${origin}/#organization` },
+      operatingSystem: 'iOS, Android, Web', image: coverUrl, license: 'https://www.gnu.org/licenses/agpl-3.0.html', sameAs: [sourceRepository], publisher: { '@id': `${origin}/#organization` },
       offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD', description: 'Free app, public API and MCP servers. No Open Media fee on payments between people today.' },
     });
   }
@@ -791,7 +791,7 @@ footer{padding:32px 20px;color:var(--muted);font-size:14px;border-top:1px solid 
 <main>
 ${markdownToHtml(page.body(origin))}
 </main>
-<footer><p>For AI agents: start at <a href="${origin}/llms.txt">llms.txt</a>, the <a href="${origin}/agents">agent guide</a> or the MCP server at <code>${origin}/open/mcp</code>. Open source under the MIT licence: <a href="${sourceRepository}">${sourceRepository}</a>.</p></footer>
+<footer><p>For AI agents: start at <a href="${origin}/llms.txt">llms.txt</a>, the <a href="${origin}/agents">agent guide</a> or the MCP server at <code>${origin}/open/mcp</code>. Open source under the GNU AGPL v3: <a href="${sourceRepository}">${sourceRepository}</a>.</p></footer>
 <script>${webMcpScript(origin)}</script>
 </body>
 </html>`;
@@ -830,7 +830,7 @@ export function withAgentHomepage(appHtml: string, origin: string): string {
 `;
   const body = `<div id="om-static">
 ${markdownToHtml(home.body(origin))}
-<p>For AI agents: start at <a href="${origin}/llms.txt">llms.txt</a>, the <a href="${origin}/agents">agent guide</a>, the <a href="${origin}/docs">API documentation</a> or the MCP server at <code>${origin}/open/mcp</code>. Open source under the MIT licence: <a href="${sourceRepository}">${sourceRepository}</a>.</p>
+<p>For AI agents: start at <a href="${origin}/llms.txt">llms.txt</a>, the <a href="${origin}/agents">agent guide</a>, the <a href="${origin}/docs">API documentation</a> or the MCP server at <code>${origin}/open/mcp</code>. Open source under the GNU AGPL v3: <a href="${sourceRepository}">${sourceRepository}</a>.</p>
 </div>`;
   return appHtml
     .replace(/<\/head>/i, `${head}</head>`)
@@ -1020,7 +1020,7 @@ Open Media is a free, open-source social app (iPhone, Android, web) with one fee
 
 - [Claude Code and Codex plugin](${sourceRepository}/tree/main/agent-plugin)
 - [TypeScript SDK, CLI and Python client](${sourceRepository}/tree/main/packages) (build from source; not yet on npm or PyPI)
-- [Source code (MIT)](${sourceRepository}) and [AGENTS.md for coding agents](${sourceRepository}/blob/main/AGENTS.md)
+- [Source code (AGPL-3.0)](${sourceRepository}) and [AGENTS.md for coding agents](${sourceRepository}/blob/main/AGENTS.md)
 
 ## Rules
 

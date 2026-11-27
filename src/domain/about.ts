@@ -198,3 +198,15 @@ export const agentInterfaces = {
 };
 
 export const sourceRepository = 'https://github.com/Manifest-Startup/open-media';
+
+/** The licence of each part of the repository. NOTICE has the full map. */
+export const licenses = {
+  core: 'AGPL-3.0-only',
+  agentPackages: { license: 'Apache-2.0', paths: ['agent-plugin/', 'skills/', 'packages/sdk/', 'packages/cli/', 'packages/python/', 'gemini-extension.json', 'GEMINI.md', 'glama.json'] },
+  docs: 'CC-BY-4.0',
+  notice: `${sourceRepository}/blob/main/NOTICE`,
+  trademarks: `${sourceRepository}/blob/main/TRADEMARKS.md`,
+} as const;
+
+/** The attribution line that AGPL-3.0 section 7(b) asks every copy, fork and hosted version to keep. */
+export const attribution = `Based on Open Media (${sourceRepository}) by Mihir Kavishwar.`;

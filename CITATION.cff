@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use Open Media, please cite it using these metadata."
+type: software
+title: "Open Media"
+abstract: >-
+  Open-source app that brings your social world together: one feed across
+  Open Media, Farcaster, Lens, Hive and DeSo, one inbox, one post to every
+  network, plus a professional side for profiles, jobs and networking (JSON
+  Resume). Agent-ready: public API, MCP servers, WebMCP, and a plugin for
+  Claude Code and Codex.
+authors:
+  - family-names: Kavishwar
+    given-names: Mihir
+repository-code: "https://github.com/Manifest-Startup/open-media"
+url: "https://openmedia.site"
+license: AGPL-3.0-only
+keywords:
+  - social media
+  - open social web
+  - decentralized social
+  - Farcaster
+  - Lens
+  - Hive
+  - DeSo
+  - unified inbox
+  - cross-posting
+  - JSON Resume
+  - MCP
+  - Model Context Protocol
+  - WebMCP
+  - AI agents

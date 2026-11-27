@@ -1,0 +1,83 @@
+Open Media
+Copyright (C) 2026 Mihir Kavishwar
+
+https://github.com/Manifest-Startup/open-media
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, version 3 of the License only (AGPL-3.0-only), with the
+additional terms below. The full licence text is in LICENSE.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+
+LICENSING MAP
+=============
+
+Each file is under the licence of the most specific entry below that covers it.
+
+  Path                                   Licence          Licence text
+  -------------------------------------  ---------------  ------------------------------
+  Everything not listed below (the app,  AGPL-3.0-only    LICENSE
+  src/, services/ including the Worker,
+  its MCP servers and WebMCP tools,
+  supabase/, scripts/, plugins/,
+  modules/, assets/)
+  agent-plugin/                          Apache-2.0       agent-plugin/LICENSE
+  skills/                                Apache-2.0       skills/LICENSE
+  packages/sdk/                          Apache-2.0       packages/sdk/LICENSE
+  packages/cli/                          Apache-2.0       packages/cli/LICENSE
+  packages/python/                       Apache-2.0       packages/python/LICENSE
+  gemini-extension.json, GEMINI.md,      Apache-2.0       agent-plugin/LICENSE
+  glama.json (agent manifests at root)
+  docs/ (prose), README.md prose,        CC-BY-4.0        docs/LICENSE.md
+  research papers in this repository
+
+Notes:
+
+- Code inside docs/ (for example docs/film/*.html, *.py, *.mjs) and code samples
+  in any documentation follow the licence of the code they show: AGPL-3.0-only,
+  or Apache-2.0 when they come from an Apache-2.0 directory.
+- modules/apple-foundation-search/LICENSE is the MIT licence of the Expo module
+  template it started from (Copyright 650 Industries, Inc.). That notice is
+  kept for the template portions; Open Media's own code in the module is
+  AGPL-3.0-only.
+- Third-party components keep their own licences (see package-lock.json and the
+  notices in assets/ and src/domain/messageMedia.ts).
+- Using Open Media's public API, MCP servers or WebMCP tools over the network
+  does not make your own software a covered work. Those interfaces are meant to
+  be used by any app or agent, open or closed.
+- Releases and commits published before this licence change remain available
+  under the MIT License under which they were published.
+
+APP STORE DISTRIBUTION
+
+The Open Media apps in the Apple App Store and Google Play are built and
+distributed by the copyright holder. The Corresponding Source of those builds
+is this repository. The copyright holder may distribute them under store
+terms; the inbound terms in CLA.md make this possible for contributed code.
+
+
+ADDITIONAL TERMS UNDER SECTION 7 OF THE GNU AGPL v3
+==================================================
+
+These terms apply to every part of Open Media licensed under AGPL-3.0-only.
+
+7(b) Attribution. Anyone who conveys, or runs for users interacting with it
+remotely over a computer network, a modified or unmodified version of this
+program must preserve the following attribution notice, in plain text, in the
+"About", credits screen, footer or equivalent location of every interactive
+user interface of that version, and in its documentation:
+
+    Based on Open Media (https://github.com/Manifest-Startup/open-media) by Mihir Kavishwar.
+
+No logo needs to be shown. The notice may be placed next to the notices of
+other projects and need not be more prominent than they are.
+
+7(e) Trademarks. This licence grants no rights to use the Open Media names,
+logos or trademarks, except as described in TRADEMARKS.md.
+
+As section 7 allows, these terms may be removed only by the copyright holder.
+If you modify this program, keep this NOTICE file with the source code.

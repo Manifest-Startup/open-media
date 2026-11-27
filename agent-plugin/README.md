@@ -107,4 +107,4 @@ Name, version and servers are kept equal across all of them by a test, and no fi
 
 - **Source:** [github.com/Manifest-Startup/open-media](https://github.com/Manifest-Startup/open-media)
 - **Links:** [Privacy](https://api.openmedia.site/privacy) · [Terms](https://api.openmedia.site/terms) · [Support](https://api.openmedia.site/contact)
-- **License:** MIT.
+- **License:** Apache License 2.0 ([LICENSE](LICENSE), [NOTICE](NOTICE)). The Open Media app and server it connects to are AGPL-3.0-only; using its MCP servers and API from this plugin is unaffected by that.

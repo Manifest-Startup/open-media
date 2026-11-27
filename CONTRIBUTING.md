@@ -28,6 +28,14 @@ Thank you for helping. Open Media is open source, and issues, ideas and pull req
 - Use official APIs and open protocols for other networks. No scraping.
 - Major design choices get a short decision record in [docs/adrs](docs/adrs).
 
+## Licence of contributions and sign-off
+
+Open Media's code is under the GNU AGPL v3, its agent plugin, skills and API clients under Apache 2.0, and its documentation under CC BY 4.0 (the map is in [NOTICE](NOTICE)).
+
+- **Sign off every commit** with `git commit -s`. The `Signed-off-by: Your Name <you@example.com>` line certifies the [Developer Certificate of Origin](https://developercertificate.org/): you wrote the change or have the right to submit it.
+- **By contributing you agree to [CLA.md](CLA.md):** your contribution is licensed under the licence of the directory it is in, and you also grant the maintainer a perpetual, irrevocable right to relicense and distribute it under other terms. This is what lets the copyright holder ship the AGPL app through the App Store and Google Play. You keep the copyright in your work.
+- Keep the attribution line and the `NOTICE`, `LICENSE` and `TRADEMARKS.md` files intact.
+
 ## Security issues
 
 Please do not open a public issue for a vulnerability. See [SECURITY.md](SECURITY.md).

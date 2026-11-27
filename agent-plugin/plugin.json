@@ -9,7 +9,7 @@
   },
   "homepage": "https://api.openmedia.site/agents",
   "repository": "https://github.com/Manifest-Startup/open-media",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "social",
     "feed",

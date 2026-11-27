@@ -6,6 +6,7 @@
 - Keep connector support claims aligned with working code. Mock or proposed connectors must be labeled clearly.
 - Every connection to another network or service has a compliance report in `docs/compliance/` (format: `docs/compliance/TEMPLATE.md`, index: `docs/compliance/README.md`). Write it before turning a connection on, and update its matrix, *Last reviewed* and change log whenever the connection's code, scopes, stored data or the network's terms change.
 - Keep generated output inside this repository or an operating-system temporary directory.
+- Licences (ADR 0046, map in `NOTICE`): core is AGPL-3.0-only; `agent-plugin/`, `skills/`, `packages/*` and the root agent manifests are Apache-2.0; prose in `docs/` is CC-BY-4.0. New manifests and packages declare the licence of their directory, and screens that show credits keep the `attribution` line from `src/domain/about.ts`. Commits are signed off (`git commit -s`).
 
 ## Finding code (knowledge graph)
 
