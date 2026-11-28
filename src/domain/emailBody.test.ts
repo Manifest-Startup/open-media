@@ -116,4 +116,6 @@ test('a preview reads only the start of a long email, and further when the start
   assert.ok(performance.now() - started < 50, `took ${Math.round(performance.now() - started)} ms`);
   const styledFirst = 'p { margin: 0; }\n'.repeat(400) + 'The parts arrived.\n' + 'More.\n'.repeat(10000);
   assert.equal(emailPreview(styledFirst), 'The parts arrived.');
+  const minified = 'p{margin:0}'.repeat(500) + '\nThe parts arrived.\n' + 'More.\n'.repeat(10000);
+  assert.equal(emailPreview(minified), 'The parts arrived.');
 });

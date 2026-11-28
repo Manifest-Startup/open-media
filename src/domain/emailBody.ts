@@ -71,9 +71,15 @@ export function emailPreview(raw: string, fallback = ''): string {
   // A preview is one line, so it reads only the start of the email: cleaning up a whole newsletter
   // for every conversation put the inbox over the Worker's CPU limit (exceededCpu). When the start
   // is all markup or stylesheet, it reads further, still bounded.
-  for (const size of PREVIEW_WINDOWS) {
-    // Cut at a line break, so a half rule or half link never becomes the preview.
-    const window = raw.length > size ? raw.slice(0, Math.max(raw.lastIndexOf('\n', size), size / 2)) : raw;
+  for (const [index, size] of PREVIEW_WINDOWS.entries()) {
+    let window = raw;
+    if (raw.length > size) {
+      // Cut at a line break, so a half rule or half link never becomes the preview. A window with
+      // no line break at all (one long minified stylesheet) moves on to the larger window.
+      const cut = raw.lastIndexOf('\n', size);
+      if (cut <= 0 && index < PREVIEW_WINDOWS.length - 1) continue;
+      window = raw.slice(0, cut > 0 ? cut : size);
+    }
     const { plain } = formatEmailBody(window);
     const lines = plain.split('\n').map((line) => line.trim()).filter((line) => line.length > 1);
     const line = lines.find((item) => !GREETING_ONLY.test(item)) ?? lines[0];
