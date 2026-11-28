@@ -108,3 +108,12 @@ test('a preview skips a greeting on its own line, like a chat preview', () => {
   assert.equal(emailPreview('Hi Stephen, I read your post.'), 'Hi Stephen, I read your post.');
   assert.equal(emailPreview('Hi Stephen,'), 'Hi Stephen,');
 });
+
+test('a preview reads only the start of a long email, and further when the start is all stylesheet', () => {
+  const newsletter = 'This week in startups.\n' + 'body, td { font-family: Arial; }\nA paragraph with https://example.com/x?y=1 words.\n'.repeat(20000);
+  const started = performance.now();
+  assert.equal(emailPreview(newsletter), 'This week in startups.');
+  assert.ok(performance.now() - started < 50, `took ${Math.round(performance.now() - started)} ms`);
+  const styledFirst = 'p { margin: 0; }\n'.repeat(400) + 'The parts arrived.\n' + 'More.\n'.repeat(10000);
+  assert.equal(emailPreview(styledFirst), 'The parts arrived.');
+});

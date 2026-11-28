@@ -68,10 +68,22 @@ const GREETING_ONLY = /^(hi|hey|hello|dear|good (morning|afternoon|evening))\b[^
 
 /** The first line worth reading: a greeting on its own ("Hi Stephen,") is skipped, like a chat preview. */
 export function emailPreview(raw: string, fallback = ''): string {
-  const { plain } = formatEmailBody(raw);
-  const lines = plain.split('\n').map((line) => line.trim()).filter((line) => line.length > 1);
-  return lines.find((line) => !GREETING_ONLY.test(line)) ?? lines[0] ?? fallback;
+  // A preview is one line, so it reads only the start of the email: cleaning up a whole newsletter
+  // for every conversation put the inbox over the Worker's CPU limit (exceededCpu). When the start
+  // is all markup or stylesheet, it reads further, still bounded.
+  for (const size of PREVIEW_WINDOWS) {
+    // Cut at a line break, so a half rule or half link never becomes the preview.
+    const window = raw.length > size ? raw.slice(0, Math.max(raw.lastIndexOf('\n', size), size / 2)) : raw;
+    const { plain } = formatEmailBody(window);
+    const lines = plain.split('\n').map((line) => line.trim()).filter((line) => line.length > 1);
+    const line = lines.find((item) => !GREETING_ONLY.test(item)) ?? lines[0];
+    if (line || raw.length <= size) return line ?? fallback;
+  }
+  return fallback;
 }
+
+/** How much of an email a preview reads: the first window, then a larger one if that was empty. */
+const PREVIEW_WINDOWS = [4_000, 32_000];
 
 /**
  * Some senders paste their stylesheet into the plain-text version ("body, td { font-family: … }").
